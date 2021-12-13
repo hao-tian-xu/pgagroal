@@ -125,7 +125,7 @@ static int  create_ssl_ctx(bool client, SSL_CTX** ctx);
 static int  create_ssl_client(SSL_CTX* ctx, char* key, char* cert, char* root, int socket, SSL** ssl);
 static int  create_ssl_server(SSL_CTX* ctx, int socket, SSL** ssl);
 static int  establish_client_tls_connection(int server, int fd, SSL** ssl);
-static int  create_client_tls_connection(int fd, SSL** ssl);
+static int  create_client_tls_connection(int slot, int fd, SSL** ssl);
 
 static int auth_query(SSL* c_ssl, int client_fd, int slot, char* username, char* database, int hba_method);
 static int auth_query_get_connection(char* username, char* password, char* database, int* server_fd, SSL** server_ssl);
@@ -494,6 +494,9 @@ pgagroal_prefill_auth(char* username, char* password, char* database, int* slot,
       goto error;
    }
    server_fd = config->connections[*slot].fd;
+
+   /* TLS support */
+   establish_client_tls_connection(config->connections[*slot].server, server_fd, server_ssl);
 
    status = pgagroal_create_startup_message(username, database, &startup_msg);
    if (status != MESSAGE_STATUS_OK)
@@ -887,6 +890,7 @@ pgagroal_remote_management_scram_sha256(char* username, char* password, int serv
 
                      if (status != 1)
                      {
+                        long derr;
                         int err = SSL_get_error(ssl, status);
                         switch (err)
                         {
@@ -905,15 +909,20 @@ pgagroal_remote_management_scram_sha256(char* username, char* password, int serv
 #endif
                               break;
                            case SSL_ERROR_SYSCALL:
-                              pgagroal_log_error("SSL_ERROR_SYSCALL: %s (%d)", strerror(errno), server_fd);
+                              derr = ERR_get_error();
+                              pgagroal_log_error("SSL_ERROR_SYSCALL: FD %d", server_fd);
+                              pgagroal_log_error("%s", ERR_error_string(derr, NULL));
+                              pgagroal_log_error("%s", ERR_lib_error_string(derr));
+                              pgagroal_log_error("%s", ERR_reason_error_string(derr));
                               errno = 0;
                               goto error;
                               break;
                            case SSL_ERROR_SSL:
-                              pgagroal_log_error("SSL_ERROR_SSL: %s (%d)", strerror(errno), server_fd);
-                              pgagroal_log_error("%s", ERR_error_string(err, NULL));
-                              pgagroal_log_error("%s", ERR_lib_error_string(err));
-                              pgagroal_log_error("%s", ERR_reason_error_string(err));
+                              derr = ERR_get_error();
+                              pgagroal_log_error("SSL_ERROR_SSL: FD %d", server_fd);
+                              pgagroal_log_error("%s", ERR_error_string(derr, NULL));
+                              pgagroal_log_error("%s", ERR_lib_error_string(derr));
+                              pgagroal_log_error("%s", ERR_reason_error_string(derr));
                               errno = 0;
                               goto error;
                               break;
@@ -3417,6 +3426,58 @@ error:
    return 1;
 }
 
+int
+pgagroal_load_tls_connection(int slot, SSL** ssl)
+{
+   int result = 0;
+   struct configuration* config;
+
+   config = (struct configuration*)shmem;
+
+   if (config->connections[slot].ssl_session_length > 0)
+   {
+      result = create_client_tls_connection(slot, config->connections[slot].fd, ssl);
+   }
+
+   return result;
+}
+
+int
+pgagroal_save_tls_connection(SSL* ssl, int slot)
+{
+   int length;
+   SSL_SESSION* session = NULL;
+   unsigned char* p = NULL;
+   struct configuration* config;
+
+   config = (struct configuration*)shmem;
+
+   config->connections[slot].ssl_session_length = 0;
+   memset(&config->connections[slot].ssl_session, 0, SSL_SESSION_BUFFER_SIZE);
+
+   if (ssl != NULL)
+   {
+      p = (unsigned char*)config->connections[slot].ssl_session;
+
+      session = SSL_get_session(ssl);
+
+      length = i2d_SSL_SESSION(session, NULL);
+      if (length > SSL_SESSION_BUFFER_SIZE)
+      {
+         pgagroal_log_error("Could not save TLS session: %d (%d)", length, SSL_SESSION_BUFFER_SIZE);
+         goto error;
+      }
+
+      config->connections[slot].ssl_session_length = i2d_SSL_SESSION(session, &p);
+   }
+
+   return 0;
+
+error:
+
+   return 1;
+}
+
 static int
 derive_key_iv(char *password, unsigned char *key, unsigned char *iv)
 {
@@ -5745,7 +5806,7 @@ establish_client_tls_connection(int server, int fd, SSL** ssl)
 
       if (msg->kind == 'S')
       {
-         create_client_tls_connection(fd, ssl);
+         create_client_tls_connection(-1, fd, ssl);
       }
    }
 
@@ -5763,11 +5824,16 @@ error:
 }
 
 static int
-create_client_tls_connection(int fd, SSL** ssl)
+create_client_tls_connection(int slot, int fd, SSL** ssl)
 {
    SSL_CTX* ctx = NULL;
    SSL* s = NULL;
+   SSL_SESSION* session = NULL;
+   unsigned char* p = NULL;
    int status = -1;
+   struct configuration* config = NULL;
+
+   config = (struct configuration*)shmem;
 
    /* We are acting as a client against the server */
    if (create_ssl_ctx(true, &ctx))
@@ -5783,12 +5849,74 @@ create_client_tls_connection(int fd, SSL** ssl)
       goto error;
    }
 
+   /* If we have an existing session then load it */
+   if (slot >= 0 && config->connections[slot].ssl_session_length > 0)
+   {
+      p = (unsigned char*)config->connections[slot].ssl_session;
+
+      session = d2i_SSL_SESSION(NULL, (const unsigned char**)&p, config->connections[slot].ssl_session_length);
+
+      pgagroal_log_error("Loading session: %p", session);
+
+      if (session == NULL)
+      {
+         goto error;
+      }
+
+      if (SSL_set_session(s, session) != 1)
+      {
+         goto error;
+      }
+
+      if (SSL_set_fd(s, fd) != 1)
+      {
+         goto error;
+      }
+   }
+
    do
    {
+      if (SSL_pending(s) > 0)
+      {
+         char pending[SSL_pending(s)];
+         struct message msg;
+
+         memset(&msg, 0, sizeof(struct message));
+         memset(&pending, 0, sizeof(pending));
+
+         SSL_peek(s, &pending, SSL_pending(s));
+
+         msg.kind = 0;
+         msg.length = SSL_pending(s);
+         msg.data = &pending;
+
+         pgagroal_log_error("BEFORE CONNECT: %d", SSL_pending(s));
+         pgagroal_log_message(&msg);
+      }
+
       status = SSL_connect(s);
+
+      if (SSL_pending(s) > 0)
+      {
+         char pending[SSL_pending(s)];
+         struct message msg;
+
+         memset(&msg, 0, sizeof(struct message));
+         memset(&pending, 0, sizeof(pending));
+
+         SSL_peek(s, &pending, SSL_pending(s));
+
+         msg.kind = 0;
+         msg.length = SSL_pending(s);
+         msg.data = &pending;
+
+         pgagroal_log_error("AFTER CONNECT: %d", SSL_pending(s));
+         pgagroal_log_message(&msg);
+      }
 
       if (status != 1)
       {
+         long derr;
          int err = SSL_get_error(s, status);
          switch (err)
          {
@@ -5803,18 +5931,20 @@ create_client_tls_connection(int fd, SSL** ssl)
             case SSL_ERROR_WANT_CLIENT_HELLO_CB:
                break;
             case SSL_ERROR_SYSCALL:
+               derr = ERR_get_error();
                pgagroal_log_error("SSL_ERROR_SYSCALL: FD %d", fd);
-               pgagroal_log_error("%s", ERR_error_string(err, NULL));
-               pgagroal_log_error("%s", ERR_lib_error_string(err));
-               pgagroal_log_error("%s", ERR_reason_error_string(err));
+               pgagroal_log_error("%s", ERR_error_string(derr, NULL));
+               pgagroal_log_error("%s", ERR_lib_error_string(derr));
+               pgagroal_log_error("%s", ERR_reason_error_string(derr));
                errno = 0;
                goto error;
                break;
             case SSL_ERROR_SSL:
+               derr = ERR_get_error();
                pgagroal_log_error("SSL_ERROR_SSL: FD %d", fd);
-               pgagroal_log_error("%s", ERR_error_string(err, NULL));
-               pgagroal_log_error("%s", ERR_lib_error_string(err));
-               pgagroal_log_error("%s", ERR_reason_error_string(err));
+               pgagroal_log_error("%s", ERR_error_string(derr, NULL));
+               pgagroal_log_error("%s", ERR_lib_error_string(derr));
+               pgagroal_log_error("%s", ERR_reason_error_string(derr));
                errno = 0;
                goto error;
                break;

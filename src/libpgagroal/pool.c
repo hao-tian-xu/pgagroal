@@ -223,7 +223,13 @@ start:
       }
       else
       {
+         SSL* s = NULL;
          bool kill = false;
+
+         if (pgagroal_load_tls_connection(*slot, &s))
+         {
+            kill = true;
+         }
 
          /* Verify the socket for the slot */
          if (!pgagroal_socket_isvalid(config->connections[*slot].fd))
@@ -250,7 +256,8 @@ start:
 
             pgagroal_log_debug("pgagroal_get_connection: Slot %d FD %d - Error", *slot, config->connections[*slot].fd);
             pgagroal_tracking_event_slot(TRACKER_BAD_CONNECTION, *slot);
-            status = pgagroal_kill_connection(*slot, *ssl);
+            status = pgagroal_kill_connection(*slot, s);
+            s = NULL;
 
             if (config->number_of_users > 0 && config->number_of_limits > 0)
             {
@@ -269,6 +276,8 @@ start:
                goto timeout;
             }
          }
+
+         *ssl = s;
       }
 
       config->connections[*slot].timestamp = time(NULL);
@@ -388,8 +397,7 @@ pgagroal_return_connection(int slot, SSL* ssl, bool transaction_mode)
    if (config->connections[slot].has_security != SECURITY_INVALID &&
        (config->connections[slot].has_security != SECURITY_SCRAM256 ||
         (config->connections[slot].has_security == SECURITY_SCRAM256 &&
-         (config->authquery || pgagroal_user_known(config->connections[slot].username)))) &&
-       ssl == NULL)
+         (config->authquery || pgagroal_user_known(config->connections[slot].username)))))
    {
       state = atomic_load(&config->states[slot]);
 
@@ -404,6 +412,20 @@ pgagroal_return_connection(int slot, SSL* ssl, bool transaction_mode)
             {
                goto kill_connection;
             }
+         }
+
+         if (pgagroal_save_tls_connection(ssl, slot))
+         {
+            goto kill_connection;
+         }
+
+         if (ssl != NULL)
+         {
+            SSL_CTX* ctx;
+
+            ctx = SSL_get_SSL_CTX(ssl);
+            SSL_free(ssl);
+            SSL_CTX_free(ctx);
          }
 
          pgagroal_tracking_event_slot(TRACKER_RETURN_CONNECTION_SUCCESS, slot);
@@ -514,6 +536,9 @@ pgagroal_kill_connection(int slot, SSL* ssl)
       config->connections[slot].security_lengths[i] = 0;
       memset(&config->connections[slot].security_messages[i], 0, SECURITY_BUFFER_SIZE);
    }
+
+   config->connections[slot].ssl_session_length = 0;
+   memset(&config->connections[slot].ssl_session, 0, sizeof(config->connections[slot].ssl_session));
 
    config->connections[slot].backend_pid = 0;
    config->connections[slot].backend_secret = 0;
@@ -1120,6 +1145,8 @@ connection_details(int slot)
             pgagroal_log_trace("                      Size: %zd", connection.security_lengths[i]);
             pgagroal_log_mem(&connection.security_messages[i], connection.security_lengths[i]);
          }
+         pgagroal_log_trace("                      Session length: %d", connection.ssl_session_length);
+         pgagroal_log_mem(&connection.ssl_session, connection.ssl_session_length);
          pgagroal_log_trace("                      Backend PID: %d", connection.backend_pid);
          pgagroal_log_trace("                      Backend Secret: %d", connection.backend_secret);
          break;
@@ -1140,6 +1167,8 @@ connection_details(int slot)
             pgagroal_log_trace("                      Size: %zd", connection.security_lengths[i]);
             pgagroal_log_mem(&connection.security_messages[i], connection.security_lengths[i]);
          }
+         pgagroal_log_trace("                      Session length: %d", connection.ssl_session_length);
+         pgagroal_log_mem(&connection.ssl_session, connection.ssl_session_length);
          pgagroal_log_trace("                      Backend PID: %d", connection.backend_pid);
          pgagroal_log_trace("                      Backend Secret: %d", connection.backend_secret);
          break;
@@ -1160,6 +1189,8 @@ connection_details(int slot)
             pgagroal_log_trace("                      Size: %zd", connection.security_lengths[i]);
             pgagroal_log_mem(&connection.security_messages[i], connection.security_lengths[i]);
          }
+         pgagroal_log_trace("                      Session length: %d", connection.ssl_session_length);
+         pgagroal_log_mem(&connection.ssl_session, connection.ssl_session_length);
          pgagroal_log_trace("                      Backend PID: %d", connection.backend_pid);
          pgagroal_log_trace("                      Backend Secret: %d", connection.backend_secret);
          break;
@@ -1180,6 +1211,8 @@ connection_details(int slot)
             pgagroal_log_trace("                      Size: %zd", connection.security_lengths[i]);
             pgagroal_log_mem(&connection.security_messages[i], connection.security_lengths[i]);
          }
+         pgagroal_log_trace("                      Session length: %d", connection.ssl_session_length);
+         pgagroal_log_mem(&connection.ssl_session, connection.ssl_session_length);
          pgagroal_log_trace("                      Backend PID: %d", connection.backend_pid);
          pgagroal_log_trace("                      Backend Secret: %d", connection.backend_secret);
          break;
@@ -1200,6 +1233,8 @@ connection_details(int slot)
             pgagroal_log_trace("                      Size: %zd", connection.security_lengths[i]);
             pgagroal_log_mem(&connection.security_messages[i], connection.security_lengths[i]);
          }
+         pgagroal_log_trace("                      Session length: %d", connection.ssl_session_length);
+         pgagroal_log_mem(&connection.ssl_session, connection.ssl_session_length);
          pgagroal_log_trace("                      Backend PID: %d", connection.backend_pid);
          pgagroal_log_trace("                      Backend Secret: %d", connection.backend_secret);
          break;
@@ -1220,6 +1255,8 @@ connection_details(int slot)
             pgagroal_log_trace("                      Size: %zd", connection.security_lengths[i]);
             pgagroal_log_mem(&connection.security_messages[i], connection.security_lengths[i]);
          }
+         pgagroal_log_trace("                      Session length: %d", connection.ssl_session_length);
+         pgagroal_log_mem(&connection.ssl_session, connection.ssl_session_length);
          pgagroal_log_trace("                      Backend PID: %d", connection.backend_pid);
          pgagroal_log_trace("                      Backend Secret: %d", connection.backend_secret);
          break;
@@ -1240,6 +1277,8 @@ connection_details(int slot)
             pgagroal_log_trace("                      Size: %zd", connection.security_lengths[i]);
             pgagroal_log_mem(&connection.security_messages[i], connection.security_lengths[i]);
          }
+         pgagroal_log_trace("                      Session length: %d", connection.ssl_session_length);
+         pgagroal_log_mem(&connection.ssl_session, connection.ssl_session_length);
          pgagroal_log_trace("                      Backend PID: %d", connection.backend_pid);
          pgagroal_log_trace("                      Backend Secret: %d", connection.backend_secret);
          break;

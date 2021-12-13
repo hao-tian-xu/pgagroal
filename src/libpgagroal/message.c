@@ -1260,6 +1260,7 @@ ssl_read_message(SSL* ssl, int timeout, struct message** msg)
       }
       else
       {
+         long derr;
          int err;
 
          err = SSL_get_error(ssl, numbytes);
@@ -1295,11 +1296,19 @@ ssl_read_message(SSL* ssl, int timeout, struct message** msg)
                keep_read = true;
                break;
             case SSL_ERROR_SYSCALL:
-               pgagroal_log_error("SSL_ERROR_SYSCALL: %s (%d)", strerror(errno), SSL_get_fd(ssl));
+               derr = ERR_get_error();
+               pgagroal_log_error("SSL_ERROR_SYSCALL: FD %d", SSL_get_fd(ssl));
+               pgagroal_log_error("%s", ERR_error_string(derr, NULL));
+               pgagroal_log_error("%s", ERR_lib_error_string(derr));
+               pgagroal_log_error("%s", ERR_reason_error_string(derr));
                errno = 0;
                break;
             case SSL_ERROR_SSL:
-               pgagroal_log_error("SSL_ERROR_SSL: %s (%d)", strerror(errno), SSL_get_fd(ssl));
+               derr = ERR_get_error();
+               pgagroal_log_error("SSL_ERROR_SSL: FD %d", SSL_get_fd(ssl));
+               pgagroal_log_error("%s", ERR_error_string(derr, NULL));
+               pgagroal_log_error("%s", ERR_lib_error_string(derr));
+               pgagroal_log_error("%s", ERR_reason_error_string(derr));
                break;
          }
          ERR_clear_error();
@@ -1354,6 +1363,7 @@ ssl_write_message(SSL* ssl, struct message* msg)
       }
       else
       {
+         long derr;
          int err = SSL_get_error(ssl, numbytes);
 
          switch (err)
@@ -1375,17 +1385,19 @@ ssl_write_message(SSL* ssl, struct message* msg)
                keep_write = true;
                break;
             case SSL_ERROR_SYSCALL:
+               derr = ERR_get_error();
                pgagroal_log_error("SSL_ERROR_SYSCALL: FD %d", SSL_get_fd(ssl));
-               pgagroal_log_error("%s", ERR_error_string(err, NULL));
-               pgagroal_log_error("%s", ERR_lib_error_string(err));
-               pgagroal_log_error("%s", ERR_reason_error_string(err));
+               pgagroal_log_error("%s", ERR_error_string(derr, NULL));
+               pgagroal_log_error("%s", ERR_lib_error_string(derr));
+               pgagroal_log_error("%s", ERR_reason_error_string(derr));
                errno = 0;
                break;
             case SSL_ERROR_SSL:
+               derr = ERR_get_error();
                pgagroal_log_error("SSL_ERROR_SSL: FD %d", SSL_get_fd(ssl));
-               pgagroal_log_error("%s", ERR_error_string(err, NULL));
-               pgagroal_log_error("%s", ERR_lib_error_string(err));
-               pgagroal_log_error("%s", ERR_reason_error_string(err));
+               pgagroal_log_error("%s", ERR_error_string(derr, NULL));
+               pgagroal_log_error("%s", ERR_lib_error_string(derr));
+               pgagroal_log_error("%s", ERR_reason_error_string(derr));
                errno = 0;
                break;
          }

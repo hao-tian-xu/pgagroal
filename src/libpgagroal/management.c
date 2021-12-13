@@ -1376,6 +1376,7 @@ write_ssl(SSL* ssl, void* buf, size_t size)
       }
       else
       {
+         long derr;
          int err = SSL_get_error(ssl, numbytes);
 
          switch (err)
@@ -1397,12 +1398,20 @@ write_ssl(SSL* ssl, void* buf, size_t size)
                keep_write = true;
                break;
             case SSL_ERROR_SYSCALL:
-               pgagroal_log_error("SSL_ERROR_SYSCALL: %s (%d)", strerror(errno), SSL_get_fd(ssl));
+               derr = ERR_get_error();
+               pgagroal_log_error("SSL_ERROR_SYSCALL: FD %d", SSL_get_fd(ssl));
+               pgagroal_log_error("%s", ERR_error_string(derr, NULL));
+               pgagroal_log_error("%s", ERR_lib_error_string(derr));
+               pgagroal_log_error("%s", ERR_reason_error_string(derr));
                errno = 0;
                keep_write = false;
                break;
             case SSL_ERROR_SSL:
-               pgagroal_log_error("SSL_ERROR_SSL: %s (%d)", strerror(errno), SSL_get_fd(ssl));
+               derr = ERR_get_error();
+               pgagroal_log_error("SSL_ERROR_SSL: FD %d", SSL_get_fd(ssl));
+               pgagroal_log_error("%s", ERR_error_string(derr, NULL));
+               pgagroal_log_error("%s", ERR_lib_error_string(derr));
+               pgagroal_log_error("%s", ERR_reason_error_string(derr));
                errno = 0;
                keep_write = false;
                break;

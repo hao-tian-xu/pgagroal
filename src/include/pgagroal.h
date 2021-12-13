@@ -48,9 +48,10 @@ extern "C" {
 
 #define MAIN_UDS ".s.pgagroal"
 
-#define MAX_BUFFER_SIZE      65535
-#define DEFAULT_BUFFER_SIZE  65535
-#define SECURITY_BUFFER_SIZE   512
+#define MAX_BUFFER_SIZE         65535
+#define DEFAULT_BUFFER_SIZE     65535
+#define SECURITY_BUFFER_SIZE      512
+#define SSL_SESSION_BUFFER_SIZE  2048
 
 #define MAX_USERNAME_LENGTH   128
 #define MAX_DATABASE_LENGTH   256
@@ -175,6 +176,9 @@ struct connection
    signed char has_security;                                                  /**< The security identifier */
    ssize_t security_lengths[NUMBER_OF_SECURITY_MESSAGES];                     /**< The lengths of the security messages */
    char security_messages[NUMBER_OF_SECURITY_MESSAGES][SECURITY_BUFFER_SIZE]; /**< The security messages */
+
+   long ssl_session_length;                            /**< The length of the SSL session */
+   unsigned char ssl_session[SSL_SESSION_BUFFER_SIZE]; /**< The SSL session (ASN.1) */
 
    int backend_pid;    /**< The backend process id */
    int backend_secret; /**< The backend secret */

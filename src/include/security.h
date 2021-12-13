@@ -138,6 +138,24 @@ pgagroal_user_known(char* user);
 int
 pgagroal_tls_valid(void);
 
+/**
+ * Load a SSL connection from a slot
+ * @param slot The slot
+ * @param ssl The resulting SSL connection (can be NULL)
+ * @return 0 upon success, otherwise 1
+ */
+int
+pgagroal_load_tls_connection(int slot, SSL** ssl);
+
+/**
+ * Save a TLS connection to a slot
+ * @param ssl The SSL connection
+ * @param slot The slot
+ * @return 0 upon success, otherwise 1
+ */
+int
+pgagroal_save_tls_connection(SSL* ssl, int slot);
+
 #ifdef __cplusplus
 }
 #endif
