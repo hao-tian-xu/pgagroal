@@ -924,7 +924,7 @@ read_superuser_path:
       errx(1, "max_connections is larger than the file descriptor limit (%ld available)", (long)(flimit.rlim_cur - 30));
    }
 
-   // Check if the daemon mode is enabled // Search: tbd
+   // Check if the daemon mode is enabled // Research: tbd
    if (daemon)
    {
       if (config->log_type == PGAGROAL_LOGGING_TYPE_CONSOLE)
@@ -935,7 +935,7 @@ read_superuser_path:
          errx(1, "Daemon mode can't be used with console logging");
       }
 
-      // Fork the process to create a child process (daemon) // Search: tbd
+      // Fork the process to create a child process (daemon) // Research: tbd
       pid = fork();
 
       if (pid < 0)
@@ -983,7 +983,7 @@ read_superuser_path:
       goto error;
    }
 
-   // If there is no Unix socket, bind the PostgreSQL Unix Domain Socket // Search: tbd
+   // If there is no Unix socket, bind the PostgreSQL Unix Domain Socket // Research: tbd
    if (!has_unix_socket)
    {
       char pgsql[MISC_LENGTH];
@@ -1025,7 +1025,7 @@ read_superuser_path:
       goto error;
    }
 
-   // Search: tbd
+   // Research: tbd
    // Initialize the libev event loop
    /* libev */
    main_loop = ev_default_loop(pgagroal_libev(config->libev));
@@ -1039,7 +1039,7 @@ read_superuser_path:
       goto error;
    }
 
-   // Search: tbd
+   // Research: tbd
    // Initialize signal watchers for various signals
    ev_signal_init((struct ev_signal*)&signal_watcher[0], shutdown_cb, SIGTERM);
    ev_signal_init((struct ev_signal*)&signal_watcher[1], reload_cb, SIGHUP);
@@ -1168,7 +1168,7 @@ read_superuser_path:
       start_metrics();
    }
 
-   // Search: tbd
+   // Research: tbd
    // Initialize and start management service, if configured
    if (config->management > 0)
    {
@@ -1214,7 +1214,7 @@ read_superuser_path:
    {
       pgagroal_log_debug("Remote management: %d", *(management_fds + i));
    }
-   // Search: tbd
+   // Research: tbd
    // Log libev engines information
    pgagroal_libev_engines();
    pgagroal_log_debug("libev engine: %s", pgagroal_libev_engine(ev_backend(main_loop)));
@@ -1262,7 +1262,6 @@ read_superuser_path:
    // Run the main event loop while the program is running
    while (keep_running)
    {
-      // Search: tbd
       ev_loop(main_loop, 0);
    }
 

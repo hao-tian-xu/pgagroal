@@ -102,12 +102,14 @@ transaction_initialize(void* shmem, void** pipeline_shmem, size_t* pipeline_shme
 static void
 transaction_start(struct ev_loop* loop, struct worker_io* w)
 {
+   // Declare local variables
    char p[MISC_LENGTH];
    bool is_new;
    struct configuration* config = NULL;
 
    config = (struct configuration*)shmem;
 
+   // Initialize local variables
    slot = -1;
    memcpy(&username[0], config->connections[w->slot].username, MAX_USERNAME_LENGTH);
    memcpy(&database[0], config->connections[w->slot].database, MAX_DATABASE_LENGTH);
@@ -117,30 +119,41 @@ transaction_start(struct ev_loop* loop, struct worker_io* w)
    next_server_message = 0;
    deallocate = false;
 
+   // Prepare the UNIX socket path
    memset(&p, 0, sizeof(p));
    snprintf(&p[0], sizeof(p), ".s.%d", getpid());
 
+   // Research: tbd
+   // Bind to the UNIX socket
    if (pgagroal_bind_unix_socket(config->unix_socket_dir, &p[0], &unix_socket))
    {
       pgagroal_log_fatal("pgagroal: Could not bind to %s/%s", config->unix_socket_dir, &p[0]);
       goto error;
    }
 
+   // TODO: where are these connections initialized?
+   // Copy file descriptors from the shared configuration into a local array
    for (int i = 0; i < config->max_connections; i++)
    {
       fds[i] = config->connections[i].fd;
    }
 
+   // Start the management event loop
    start_mgt(loop);
 
+   // Log a tracking event for the start of the transaction
    pgagroal_tracking_event_slot(TRACKER_TX_RETURN_CONNECTION_START, w->slot);
 
+   // Store whether the connection in the slot is new
    is_new = config->connections[w->slot].new;
+   // Return the connection to the connection pool
    pgagroal_return_connection(w->slot, w->server_ssl, true);
 
+   // Reset worker_io structure fields
    w->server_fd = -1;
    w->slot = -1;
 
+   // If the connection is new, sleep for 5ms to allow the connection to stabilize
    if (is_new)
    {
       /* Sleep for 5ms */
@@ -151,6 +164,7 @@ transaction_start(struct ev_loop* loop, struct worker_io* w)
 
 error:
 
+   // In case of an error, set the exit_code, stop the loop and return
    exit_code = WORKER_FAILURE;
    running = 0;
    ev_break(loop, EVBREAK_ALL);
@@ -237,7 +251,7 @@ transaction_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
 
       fatal = false;
 
-      // Search: tbd
+      // Research: tbd
       // Start the server_io event watcher
       ev_io_start(loop, (struct ev_io*)&server_io);
    }
@@ -433,15 +447,18 @@ transaction_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
    wi = (struct worker_io*)watcher;
    config = (struct configuration*)shmem;
 
+   // Set server_fd and slot from the configuration
    /* We can't use the information from wi except from client_fd/client_ssl */
    wi->server_fd = config->connections[slot].fd;
    wi->slot = slot;
 
+   // Check if the client socket is valid
    if (!pgagroal_socket_isvalid(wi->client_fd))
    {
       goto client_error;
    }
 
+   // Read a message from the server, either via a socket or SSL
    if (wi->server_ssl == NULL)
    {
       status = pgagroal_read_socket_message(wi->server_fd, &msg);
@@ -450,19 +467,24 @@ transaction_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
    {
       status = pgagroal_read_ssl_message(wi->server_ssl, &msg);
    }
+   // If the message was read successfully
    if (likely(status == MESSAGE_STATUS_OK))
    {
+      // Update Prometheus network received metric
       pgagroal_prometheus_network_received_add(msg->length);
 
       int offset = 0;
 
+      // Iterate through the message
       while (offset < msg->length)
       {
          if (next_server_message == 0)
          {
+            // Read message kind and length
             char kind = pgagroal_read_byte(msg->data + offset);
             int length = pgagroal_read_int32(msg->data + offset + 1);
 
+            // Check if the message is a transaction state message
             /* The Z message tell us the transaction state */
             if (kind == 'Z')
             {
@@ -470,11 +492,14 @@ transaction_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
 
                has_z = true;
 
+               // If the transaction state is not idle and not currently in a transaction
                if (tx_state != 'I' && !in_tx)
                {
+                  // Update Prometheus transaction count metric
                   pgagroal_prometheus_tx_count_add();
                }
 
+               // Update in_tx to reflect the current transaction state
                in_tx = tx_state != 'I';
             }
 
@@ -492,11 +517,13 @@ transaction_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
          }
          else
          {
+            // Move to the next server message
             offset = MIN(next_server_message, msg->length);
             next_server_message -= offset;
          }
       }
 
+      // Write the message to the client, either via a socket or SSL
       if (wi->client_ssl == NULL)
       {
          status = pgagroal_write_socket_message(wi->client_fd, msg);
@@ -505,11 +532,13 @@ transaction_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
       {
          status = pgagroal_write_ssl_message(wi->client_ssl, msg);
       }
+      // If the message writing failed, go to the client_error label
       if (unlikely(status != MESSAGE_STATUS_OK))
       {
          goto client_error;
       }
 
+      // Check if the message is an error message and if it is fatal or panic
       if (unlikely(msg->kind == 'E'))
       {
          if (!strncmp(msg->data + 6, "FATAL", 5) || !strncmp(msg->data + 6, "PANIC", 5))
@@ -518,19 +547,27 @@ transaction_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
          }
       }
 
+      // If not fatal
       if (!fatal)
       {
+         // If there is a transaction state message indicating not in a transaction, and the slot is valid
          if (has_z && !in_tx && slot != -1)
          {
+            // Stop the server_io event watcher
             ev_io_stop(loop, (struct ev_io*)&server_io);
 
+            // Research: tbd
+            // If deallocate flag is set, send deallocate all message to the server
             if (deallocate)
             {
                pgagroal_write_deallocate_all(wi->server_ssl, wi->server_fd);
                deallocate = false;
             }
 
+            // TODO: minor
+            // Send a tracking event for returning the connection to the pool
             pgagroal_tracking_event_slot(TRACKER_TX_RETURN_CONNECTION, slot);
+            // Return the connection to the pool
             if (pgagroal_return_connection(slot, wi->server_ssl, true))
             {
                goto return_error;
@@ -539,26 +576,34 @@ transaction_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
             slot = -1;
          }
       }
+      // If the error is fatal
       else
       {
+         // If there is a transaction state message indicating not in a transaction, and the slot is valid
          if (has_z && !in_tx && slot != -1)
          {
+            // Research: tbd
+            // Stop the server_io event watcher
             ev_io_stop(loop, (struct ev_io*)&server_io);
 
+            // Set the exit code and stop the loop
             exit_code = WORKER_SERVER_FATAL;
             running = 0;
          }
       }
    }
+   // If the message status is zero, go to the server_done label
    else if (status == MESSAGE_STATUS_ZERO)
    {
       goto server_done;
    }
+   // If the message status is an error, go to the server_error label
    else
    {
       goto server_error;
    }
 
+   // Break the event loop
    ev_break(loop, EVBREAK_ONE);
    return;
 
@@ -570,6 +615,7 @@ client_error:
    errno = 0;
 
    exit_code = WORKER_CLIENT_FAILURE;
+   // set the running flag to 0 to stop the loop
    running = 0;
    ev_break(loop, EVBREAK_ALL);
    return;
@@ -634,6 +680,7 @@ shutdown_mgt(struct ev_loop* loop)
 static void
 accept_cb(struct ev_loop* loop, struct ev_io* watcher, int revents)
 {
+   // Declare local variables
    struct sockaddr_in client_addr;
    socklen_t client_addr_length;
    int client_fd;
@@ -645,6 +692,7 @@ accept_cb(struct ev_loop* loop, struct ev_io* watcher, int revents)
 
    config = (struct configuration*)shmem;
 
+   // Check for invalid events
    if (EV_ERROR & revents)
    {
       pgagroal_log_debug("accept_cb: invalid event: %s", strerror(errno));
@@ -652,6 +700,8 @@ accept_cb(struct ev_loop* loop, struct ev_io* watcher, int revents)
       return;
    }
 
+   // Process the management request
+   // Accept the incoming connection
    client_addr_length = sizeof(client_addr);
    client_fd = accept(watcher->fd, (struct sockaddr*)&client_addr, &client_addr_length);
    if (client_fd == -1)
@@ -665,6 +715,7 @@ accept_cb(struct ev_loop* loop, struct ev_io* watcher, int revents)
    pgagroal_management_read_header(client_fd, &id, &payload_slot);
    pgagroal_management_read_payload(client_fd, id, &payload_i, &payload_s);
 
+   // Switch statement to handle different management request types
    switch (id)
    {
       case MANAGEMENT_CLIENT_FD:
@@ -684,5 +735,7 @@ accept_cb(struct ev_loop* loop, struct ev_io* watcher, int revents)
          break;
    }
 
+   // Research: tbd
+   // Close the client connection
    pgagroal_disconnect(client_fd);
 }

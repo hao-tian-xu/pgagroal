@@ -59,19 +59,19 @@ void
 pgagroal_worker(int client_fd, char* address, char** argv)
 {
    // Declare necessary variables
-   struct ev_loop* loop = NULL;        // Event loop for this worker
-   struct signal_info signal_watcher;  // Signal watcher for the worker
-   struct worker_io client_io;         // Worker I/O structure for the client
-   struct worker_io server_io;         // Worker I/O structure for the server
-   time_t start_time;                  // Time when the worker started processing
-   bool started = false;               // Flag to indicate whether the worker has started
-   int auth_status;                    // Authentication status
-   struct configuration* config;       // Pointer to the configuration structure in shared memory
-   struct pipeline p;                  // Pipeline structure
-   bool tx_pool = false;               // Flag to indicate if the connection is part of a transaction pool
-   int32_t slot = -1;                  // Slot index in the connection pool
-   SSL* client_ssl = NULL;             // SSL object for the client connection
-   SSL* server_ssl = NULL;             // SSL object for the server connection
+   struct ev_loop* loop = NULL;       // Event loop for this worker
+   struct signal_info signal_watcher; // Signal watcher for the worker
+   struct worker_io client_io;        // Worker I/O structure for the client
+   struct worker_io server_io;        // Worker I/O structure for the server
+   time_t start_time;                 // Time when the worker started processing
+   bool started = false;              // Flag to indicate whether the worker has started
+   int auth_status;                   // Authentication status
+   struct configuration* config;      // Pointer to the configuration structure in shared memory
+   struct pipeline p;                 // Pipeline structure
+   bool tx_pool = false;              // Flag to indicate if the connection is part of a transaction pool
+   int32_t slot = -1;                 // Slot index in the connection pool
+   SSL* client_ssl = NULL;            // SSL object for the client connection
+   SSL* server_ssl = NULL;            // SSL object for the server connection
 
    // Initialize logging and memory management
    pgagroal_start_logging();

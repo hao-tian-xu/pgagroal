@@ -61,6 +61,7 @@ static bool do_prefill(char* username, char* database, int size);
 int
 pgagroal_get_connection(char* username, char* database, bool reuse, bool transaction_mode, int* slot, SSL** ssl)
 {
+   // Declare necessary variables
    bool do_init;
    bool has_lock;
    int connections;
@@ -81,6 +82,7 @@ pgagroal_get_connection(char* username, char* database, bool reuse, bool transac
 
    pgagroal_prometheus_connection_get();
 
+   // Find the best limit rule based on the provided username and database
    best_rule = find_best_rule(username, database);
    retries = 0;
    start_time = time(NULL);
@@ -93,17 +95,23 @@ start:
    do_init = false;
    has_lock = false;
 
+   // Research: what is best rule
+   // Check if the best rule is valid
    if (best_rule >= 0)
    {
+      // Increment the active_connections counter for the best rule
       connections = atomic_fetch_add(&config->limits[best_rule].active_connections, 1);
+      // If the number of active connections exceeds the maximum allowed, retry
       if (connections >= config->limits[best_rule].max_size)
       {
          goto retry;
       }
    }
 
+   // Increment the global active_connections counter
    connections = atomic_fetch_add(&config->active_connections, 1);
    has_lock = true;
+   // If the number of global active connections exceeds the maximum allowed, retry
    if (connections >= config->max_connections)
    {
       goto retry;
@@ -116,8 +124,10 @@ start:
       {
          free = STATE_FREE;
 
+         // Attempt to switch the connection state from free to in use
          if (atomic_compare_exchange_strong(&config->states[i], &free, STATE_IN_USE))
          {
+            // Check if the connection matches the best rule, username, and database
             if (best_rule == config->connections[i].limit_rule &&
                 !strcmp((const char*)(&config->connections[i].username), username) &&
                 !strcmp((const char*)(&config->connections[i].database), database))
@@ -126,12 +136,15 @@ start:
             }
             else
             {
+               // If the connection doesn't match, set its state back to free
                atomic_store(&config->states[i], STATE_FREE);
             }
          }
       }
    }
 
+   // If a connection slot is not found and not in transaction_mode, try creating a new connection
+   // TODO: not creating new connections in transaction_mode here
    if (*slot == -1 && !transaction_mode)
    {
       /* Ok, try and create a new connection */
@@ -139,6 +152,7 @@ start:
       {
          not_init = STATE_NOTINIT;
 
+         // Attempt to switch the connection state from not initialized to initialized
          if (atomic_compare_exchange_strong(&config->states[i], &not_init, STATE_INIT))
          {
             *slot = i;
@@ -147,16 +161,21 @@ start:
       }
    }
 
+   // If a connection slot is found
    if (*slot != -1)
    {
+      // Set the limit rule and process ID for the connection
       config->connections[*slot].limit_rule = best_rule;
       config->connections[*slot].pid = getpid();
 
+      // If the connection is new
       if (do_init)
       {
+         // We need to find the primary server for the connection
          /* We need to find the server for the connection */
          if (pgagroal_get_primary(&server))
          {
+            // If no primary server is found, reset the connection state and perform a flush
             config->connections[*slot].limit_rule = -1;
             config->connections[*slot].pid = -1;
             atomic_store(&config->states[*slot], STATE_NOTINIT);
@@ -171,6 +190,7 @@ start:
 
          pgagroal_log_debug("connect: server %d", server);
 
+         // Connect to the primary server using either a UNIX socket or a TCP socket
          if (config->servers[server].host[0] == '/')
          {
             char pgsql[MISC_LENGTH];
@@ -184,6 +204,7 @@ start:
             ret = pgagroal_connect(config->servers[server].host, config->servers[server].port, &fd);
          }
 
+         // If connection to the primary server failed, handle the error
          if (ret)
          {
             pgagroal_log_error("pgagroal: No connection to %s:%d", config->servers[server].host, config->servers[server].port);
@@ -198,6 +219,7 @@ start:
                pgagroal_flush_server(server);
             }
 
+            // Perform failover if enabled
             if (config->failover)
             {
                pgagroal_server_force_failover(server);
@@ -210,6 +232,7 @@ start:
 
          pgagroal_log_debug("connect: %s:%d using slot %d fd %d", config->servers[server].host, config->servers[server].port, *slot, fd);
 
+         // Set the connection properties and file descriptor
          config->connections[*slot].server = server;
 
          memset(&config->connections[*slot].username, 0, MAX_USERNAME_LENGTH);
@@ -219,10 +242,12 @@ start:
          memcpy(&config->connections[*slot].database, database, MIN(strlen(database), MAX_DATABASE_LENGTH - 1));
 
          config->connections[*slot].has_security = SECURITY_INVALID;
-         config->connections[*slot].fd = fd;
+         config->connections[*slot].fd = fd; // memo: connnection fd is initialized here
 
+         // Set the connection state to in use
          atomic_store(&config->states[*slot], STATE_IN_USE);
       }
+      // If the connection is already initialized
       else
       {
          bool kill = false;
@@ -241,11 +266,13 @@ start:
             }
          }
 
+         // Validate the connection if it's in foreground mode
          if (!kill && config->validation == VALIDATION_FOREGROUND)
          {
             kill = !pgagroal_connection_isvalid(config->connections[*slot].fd);
          }
 
+         // If the connection should be killed
          if (kill)
          {
             int status;
@@ -267,6 +294,7 @@ start:
          }
       }
 
+      // Set the connection start and timestamp
       if (config->connections[*slot].start_time == -1)
       {
          config->connections[*slot].start_time = time(NULL);
@@ -274,15 +302,18 @@ start:
 
       config->connections[*slot].timestamp = time(NULL);
 
+      // Update Prometheus metrics and tracking events
       atomic_store(&prometheus->client_wait_time, difftime(time(NULL), start_time));
       pgagroal_prometheus_connection_success();
       pgagroal_tracking_event_slot(TRACKER_GET_CONNECTION_SUCCESS, *slot);
       pgagroal_prometheus_connection_unawaiting(best_rule);
       return 0;
    }
+   // If a connection slot is still not found, retry
    else
    {
 retry:
+      // Decrement the active connections for the best rule and the overall active connections if necessary
       if (best_rule >= 0)
       {
          atomic_fetch_sub(&config->limits[best_rule].active_connections, 1);
@@ -292,17 +323,20 @@ retry:
          atomic_fetch_sub(&config->active_connections, 1);
       }
 retry2:
+      // If there is a blocking timeout
       if (config->blocking_timeout > 0)
       {
          /* Sleep for 500ms */
          SLEEP(500000000L)
 
+         // Check if the blocking timeout has been reached
          double diff = difftime(time(NULL), start_time);
          if (diff >= (double)config->blocking_timeout)
          {
             goto timeout;
          }
 
+         // Remove the connection for the best rule if needed
          if (best_rule == -1)
          {
             remove_connection(username, database);
@@ -312,8 +346,10 @@ retry2:
       }
       else
       {
+         // If not in transaction mode and a suitable connection isn't found
          if (!transaction_mode)
          {
+            // Retry the connection process based on the best rule and the max retries limit
             if (best_rule == -1)
             {
                if (remove_connection(username, database))
@@ -334,6 +370,7 @@ retry2:
                }
             }
          }
+         // If in transaction mode, sleep for 1000 nanos and retry
          else
          /* Sleep for 1000 nanos */
          {
@@ -344,6 +381,7 @@ retry2:
    }
 
 timeout:
+   // Update Prometheus metrics and tracking events for connection timeout
    atomic_store(&prometheus->client_wait_time, difftime(time(NULL), start_time));
    pgagroal_prometheus_connection_timeout();
    pgagroal_tracking_event_basic(TRACKER_GET_CONNECTION_TIMEOUT, username, database);
@@ -351,6 +389,7 @@ timeout:
    return 1;
 
 error:
+   // If an error occurs, decrement the active connections and update Prometheus metrics and tracking events
    if (best_rule >= 0)
    {
       atomic_fetch_sub(&config->limits[best_rule].active_connections, 1);
