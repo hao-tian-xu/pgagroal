@@ -1213,6 +1213,7 @@ read_message(int socket, bool block, int timeout, struct message** msg)
    struct timeval tv;
    struct message* m = NULL;
 
+   // If there is a timeout value set, configure the socket to use it
    if (unlikely(timeout > 0))
    {
       tv.tv_sec = timeout;
@@ -1224,16 +1225,21 @@ read_message(int socket, bool block, int timeout, struct message** msg)
    {
       keep_read = false;
 
+      // Allocate memory for the message
       m = pgagroal_memory_message();
 
+      // Read data from the socket into the message
       numbytes = read(socket, m->data, m->max_length);
 
+      // If data has been successfully read
       if (likely(numbytes > 0))
       {
+         // Set the message kind and length
          m->kind = (signed char)(*((char*)m->data));
          m->length = numbytes;
          *msg = m;
 
+         // Reset the socket timeout if it was set
          if (unlikely(timeout > 0))
          {
             tv.tv_sec = 0;
@@ -1243,8 +1249,10 @@ read_message(int socket, bool block, int timeout, struct message** msg)
 
          return MESSAGE_STATUS_OK;
       }
+      // If there was no data to read
       else if (numbytes == 0)
       {
+         // Check if the socket operation would block and if we allow blocking
          if ((errno == EAGAIN || errno == EWOULDBLOCK) && block)
          {
             keep_read = true;
@@ -1252,6 +1260,7 @@ read_message(int socket, bool block, int timeout, struct message** msg)
          }
          else
          {
+            // Reset the socket timeout if it was set
             if (unlikely(timeout > 0))
             {
                tv.tv_sec = 0;
@@ -1262,8 +1271,10 @@ read_message(int socket, bool block, int timeout, struct message** msg)
             return MESSAGE_STATUS_ZERO;
          }
       }
+      // If an error occurred while reading
       else
       {
+         // Check if the socket operation would block and if we allow blocking
          if ((errno == EAGAIN || errno == EWOULDBLOCK) && block)
          {
             keep_read = true;
@@ -1271,7 +1282,7 @@ read_message(int socket, bool block, int timeout, struct message** msg)
          }
       }
    }
-   while (keep_read);
+   while (keep_read); // Continue reading if the socket operation would block
 
    if (unlikely(timeout > 0))
    {
@@ -1293,7 +1304,7 @@ write_message(int socket, struct message* msg)
    ssize_t remaining;
 
 #ifdef DEBUG
-   assert(msg != NULL);
+   assert(msg != NULL); // Ensure the message is not NULL when in debug mode
 #endif
 
    numbytes = 0;
@@ -1305,42 +1316,51 @@ write_message(int socket, struct message* msg)
    {
       keep_write = false;
 
+      // Write the message data to the socket
       numbytes = write(socket, msg->data + offset, remaining);
 
+      // If the entire message is written successfully
       if (likely(numbytes == msg->length))
       {
          return MESSAGE_STATUS_OK;
       }
+      // If part of the message is written
       else if (numbytes != -1)
       {
+         // Update the offset, total bytes written, and remaining bytes
          offset += numbytes;
          totalbytes += numbytes;
          remaining -= numbytes;
 
+         // If the entire message has been written
          if (totalbytes == msg->length)
          {
             return MESSAGE_STATUS_OK;
          }
 
+         // Log debug information about the write operation
          pgagroal_log_debug("Write %d - %zd/%zd vs %zd", socket, numbytes, totalbytes, msg->length);
          keep_write = true;
          errno = 0;
       }
+      // If an error occurred while writing
       else
       {
          switch (errno)
          {
             case EAGAIN:
+               // If the operation would block, retry the write
                keep_write = true;
                errno = 0;
                break;
             default:
+               // For other errors, stop writing
                keep_write = false;
                break;
          }
       }
    }
-   while (keep_write);
+   while (keep_write); // Continue writing if the operation would block
 
    return MESSAGE_STATUS_ERROR;
 }
