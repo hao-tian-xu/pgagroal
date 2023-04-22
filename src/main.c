@@ -294,6 +294,8 @@ usage(void)
 int
 main(int argc, char** argv)
 {
+   /* Declare variables */
+   // Path variables for various configuration files.
    char* configuration_path = NULL;
    char* hba_path = NULL;
    char* limit_path = NULL;
@@ -301,35 +303,48 @@ main(int argc, char** argv)
    char* frontend_users_path = NULL;
    char* admins_path = NULL;
    char* superuser_path = NULL;
+   // Daemon flag and process id variables.
    bool daemon = false;
    pid_t pid, sid;
 #ifdef HAVE_LINUX
+   // Systemd socket activation variable for Linux only.
    int sds;
 #endif
+   // Socket-related flags.
    bool has_unix_socket = false;
    bool has_main_sockets = false;
+   // Shared memory-related variables.
    void* tmp_shmem = NULL;
+   // Event loop and signal handling variables.
    struct signal_info signal_watcher[6];
    struct ev_periodic idle_timeout;
    struct ev_periodic max_connection_age;
    struct ev_periodic validation;
    struct ev_periodic disconnect_client;
+   // Resource limit variable.
    struct rlimit flimit;
+   // Shared memory-related variables.
    size_t shmem_size;
    size_t pipeline_shmem_size = 0;
    size_t prometheus_shmem_size = 0;
    size_t prometheus_cache_shmem_size = 0;
    size_t tmp_size;
+   // Configuration structure and return value variable.
    struct configuration* config = NULL;
    int ret;
+   // Variable to hold getopt_long return value.
    int c;
+   // Flag to determine if a configuration file is mandatory.
    bool conf_file_mandatory;
-   char message[MISC_LENGTH]; // a generic message used for errors
+   // A generic message used for errors
+   char message[MISC_LENGTH];
 
    argv_ptr = argv;
 
+   /* Main loop to process command line arguments */
    while (1)
    {
+      // Define long options for command line arguments.
       static struct option long_options[] =
       {
          {"config", required_argument, 0, 'c'},
@@ -345,16 +360,20 @@ main(int argc, char** argv)
       };
       int option_index = 0;
 
+      // Get next option from command line arguments.
       c = getopt_long (argc, argv, "dV?a:c:l:u:F:A:S:",
                        long_options, &option_index);
 
+      // Break the loop if there are no more options to process.
       if (c == -1)
       {
          break;
       }
 
+      // Process the current option.
       switch (c)
       {
+         // Store the configuration file paths or set the corresponding flags
          case 'a':
             hba_path = optarg;
             break;
@@ -379,9 +398,12 @@ main(int argc, char** argv)
          case 'd':
             daemon = true;
             break;
+
+         // Print version information and exit
          case 'V':
             version();
             break;
+         // Print usage information and exit
          case '?':
             usage();
             exit(1);
@@ -391,6 +413,7 @@ main(int argc, char** argv)
       }
    }
 
+   // Check if the process is running as root, which is not allowed.
    if (getuid() == 0)
    {
 #ifdef HAVE_LINUX
@@ -399,6 +422,7 @@ main(int argc, char** argv)
       errx(1, "Using the root account is not allowed");
    }
 
+   // Calculate the shared memory size and create shared memory for the configuration.
    shmem_size = sizeof(struct configuration);
    if (pgagroal_create_shared_memory(shmem_size, HUGEPAGE_OFF, &shmem))
    {
@@ -408,17 +432,20 @@ main(int argc, char** argv)
       errx(1, "Error in creating shared memory");
    }
 
+   // Initialize the configuration in shared memory and set the config pointer.
    pgagroal_init_configuration(shmem);
    config = (struct configuration*)shmem;
 
+   // Clear known_fds and message buffers.
    memset(&known_fds, 0, sizeof(known_fds));
    memset(message, 0, MISC_LENGTH);
 
-   // the main configuration file is mandatory!
+   /* Check and store paths of various configuration files */
+   // The main configuration file is mandatory! Use default path if not provided.
    configuration_path = configuration_path != NULL ? configuration_path : PGAGROAL_DEFAULT_CONF_FILE;
    if ((ret = pgagroal_read_configuration(shmem, configuration_path, true)) != PGAGROAL_CONFIGURATION_STATUS_OK)
    {
-      // the configuration has some problem, build up a descriptive message
+      // The configuration has some problem, build up a descriptive message
       if (ret == PGAGROAL_CONFIGURATION_STATUS_FILE_NOT_FOUND)
       {
          snprintf(message, MISC_LENGTH, "Configuration file not found");
@@ -444,9 +471,10 @@ main(int argc, char** argv)
       errx(1, "%s (file <%s>)", message, configuration_path);
    }
 
+   // Copy the configuration path into the config structure.
    memcpy(&config->configuration_path[0], configuration_path, MIN(strlen(configuration_path), MAX_PATH - 1));
 
-   // the HBA file is mandatory!
+   // The HBA file is mandatory! Use default path if not provided.
    hba_path = hba_path != NULL ? hba_path : PGAGROAL_DEFAULT_HBA_FILE;
    memset(message, 0, MISC_LENGTH);
    ret = pgagroal_read_hba_configuration(shmem, hba_path);
@@ -468,16 +496,22 @@ main(int argc, char** argv)
       errx(1, "%s (file <%s>)", message, hba_path);
    }
 
+   // Copy the HBA path into the config structure.
    memcpy(&config->hba_path[0], hba_path, MIN(strlen(hba_path), MAX_PATH - 1));
 
+   // Start reading the limit configuration file.
    conf_file_mandatory = true;
 read_limit_path:
    if (limit_path != NULL)
    {
+      // Read the limit configuration from the provided path.
       memset(message, 0, MISC_LENGTH);
       ret = pgagroal_read_limit_configuration(shmem, limit_path);
+
+      // Check the status of the configuration file and handle errors.
       if (ret == PGAGROAL_CONFIGURATION_STATUS_OK)
       {
+         // Copy the limit path into the config structure.
          memcpy(&config->limit_path[0], limit_path, MIN(strlen(limit_path), MAX_PATH - 1));
       }
       else if (conf_file_mandatory && ret == PGAGROAL_CONFIGURATION_STATUS_FILE_NOT_FOUND)
@@ -503,21 +537,26 @@ read_limit_path:
    }
    else
    {
-      // the user did not specify a file on the command line
-      // so try the default one and allow it to be missing
+      // The user did not specify a file on the command line
+      // So try the default one and allow it to be missing
       limit_path = PGAGROAL_DEFAULT_LIMIT_FILE;
       conf_file_mandatory = false;
       goto read_limit_path;
    }
 
+   // Start reading the users configuration file.
    conf_file_mandatory = true;
 read_users_path:
    if (users_path != NULL)
    {
+      // Read the users configuration from the provided path.
       memset(message, 0, MISC_LENGTH);
       ret = pgagroal_read_users_configuration(shmem, users_path);
+
+      // Check the status of the configuration file and handle errors.
       if (ret == PGAGROAL_CONFIGURATION_STATUS_OK)
       {
+         // Copy the users path into the config structure.
          memcpy(&config->users_path[0], users_path, MIN(strlen(users_path), MAX_PATH - 1));
       }
       else if (ret == PGAGROAL_CONFIGURATION_STATUS_FILE_NOT_FOUND && conf_file_mandatory)
@@ -552,18 +591,22 @@ read_users_path:
    }
    else
    {
-      // the user did not specify a file on the command line
-      // so try the default one and allow it to be missing
+      // The user did not specify a file on the command line
+      // So try the default one and allow it to be missing
       users_path = PGAGROAL_DEFAULT_USERS_FILE;
       conf_file_mandatory = false;
       goto read_users_path;
    }
 
+   // Start reading the frontend users configuration file.
    conf_file_mandatory = true;
 read_frontend_users_path:
    if (frontend_users_path != NULL)
    {
+      // Read the frontend users configuration from the provided path.
       ret = pgagroal_read_frontend_users_configuration(shmem, frontend_users_path);
+
+      // Check the status of the configuration file and handle errors.
       if (ret == PGAGROAL_CONFIGURATION_STATUS_FILE_NOT_FOUND && conf_file_mandatory)
       {
          memset(message, 0, MISC_LENGTH);
@@ -593,24 +636,29 @@ read_frontend_users_path:
       }
       else if (ret == PGAGROAL_CONFIGURATION_STATUS_OK)
       {
+         // Copy the frontend users path into the config structure.
          memcpy(&config->frontend_users_path[0], frontend_users_path, MIN(strlen(frontend_users_path), MAX_PATH - 1));
       }
    }
    else
    {
-      // the user did not specify a file on the command line
-      // so try the default one and allow it to be missing
+      // The user did not specify a file on the command line
+      // So try the default one and allow it to be missing
       frontend_users_path = PGAGROAL_DEFAULT_FRONTEND_USERS_FILE;
       conf_file_mandatory = false;
       goto read_frontend_users_path;
    }
 
+   // Start reading the admins configuration file.
    conf_file_mandatory = true;
 read_admins_path:
    if (admins_path != NULL)
    {
+      // Read the admins configuration from the provided path.
       memset(message, 0, MISC_LENGTH);
       ret = pgagroal_read_admins_configuration(shmem, admins_path);
+
+      // Check the status of the configuration file and handle errors.
       if (ret == PGAGROAL_CONFIGURATION_STATUS_FILE_NOT_FOUND && conf_file_mandatory)
       {
 
@@ -638,24 +686,29 @@ read_admins_path:
       }
       else if (ret == PGAGROAL_CONFIGURATION_STATUS_OK)
       {
+         // Copy the admins path into the config structure.
          memcpy(&config->admins_path[0], admins_path, MIN(strlen(admins_path), MAX_PATH - 1));
       }
    }
    else
    {
-      // the user did not specify a file on the command line
-      // so try the default one and allow it to be missing
+      // The user did not specify a file on the command line
+      // So try the default one and allow it to be missing
       admins_path = PGAGROAL_DEFAULT_ADMINS_FILE;
       conf_file_mandatory = false;
       goto read_admins_path;
    }
 
+   // Start reading the superuser configuration file.
    conf_file_mandatory = true;
 read_superuser_path:
    if (superuser_path != NULL)
    {
+      // Read the superuser configuration from the provided path.
       ret = pgagroal_read_superuser_configuration(shmem, superuser_path);
       memset(message, 0, MISC_LENGTH);
+
+      // Check the status of the configuration file and handle errors.
       if (ret == PGAGROAL_CONFIGURATION_STATUS_FILE_NOT_FOUND && conf_file_mandatory)
       {
          snprintf(message, MISC_LENGTH, "SUPERUSER configuration file not found");
@@ -681,13 +734,14 @@ read_superuser_path:
       }
       else if (ret == PGAGROAL_CONFIGURATION_STATUS_OK)
       {
+         // Copy the superuser configuration path into the config structure.
          memcpy(&config->superuser_path[0], superuser_path, MIN(strlen(superuser_path), MAX_PATH - 1));
       }
    }
    else
    {
-      // the user did not specify a file on the command line
-      // so try the default one and allow it to be missing
+      // The user did not specify a file on the command line
+      // So try the default one and allow it to be missing
       superuser_path = PGAGROAL_DEFAULT_SUPERUSER_FILE;
       conf_file_mandatory = false;
       goto read_superuser_path;
@@ -695,13 +749,15 @@ read_superuser_path:
 
    /* systemd sockets */
 #ifdef HAVE_LINUX
+   // Get the number of systemd sockets.
    sds = sd_listen_fds(0);
    if (sds > 0)
    {
       int m = 0;
-
+      // Initialize main file descriptors count.
       main_fds_length = 0;
 
+      // Count the number of main file descriptors (AF_INET and AF_INET6).
       for (int i = 0; i < sds; i++)
       {
          int fd = SD_LISTEN_FDS_START + i;
@@ -712,11 +768,13 @@ read_superuser_path:
          }
       }
 
+      // Allocate memory for the main file descriptors if necessary.
       if (main_fds_length > 0)
       {
          main_fds = malloc(main_fds_length * sizeof(int));
       }
 
+      // Iterate through the systemd sockets, setting the file descriptors and flags accordingly.
       for (int i = 0; i < sds; i++)
       {
          int fd = SD_LISTEN_FDS_START + i;
@@ -736,6 +794,7 @@ read_superuser_path:
    }
 #endif
 
+   // Initialize the logging system
    if (pgagroal_init_logging())
    {
 #ifdef HAVE_LINUX
@@ -744,14 +803,18 @@ read_superuser_path:
       exit(1);
    }
 
+   // Start the logging system
    if (pgagroal_start_logging())
    {
 #ifdef HAVE_LINUX
+      // Notify the systemd about the failure
       sd_notify(0, "STATUS=Failed to start logging");
 #endif
       errx(1, "Failed to start logging");
    }
 
+   /* Configuration validation */
+   // Validate the main configuration
    if (pgagroal_validate_configuration(shmem, has_unix_socket, has_main_sockets))
    {
 #ifdef HAVE_LINUX
@@ -759,6 +822,7 @@ read_superuser_path:
 #endif
       errx(1, "Invalid configuration");
    }
+   // Validate the HBA configuration
    if (pgagroal_validate_hba_configuration(shmem))
    {
 #ifdef HAVE_LINUX
@@ -766,6 +830,7 @@ read_superuser_path:
 #endif
       errx(1, "Invalid HBA configuration");
    }
+   // Validate the limit configuration
    if (pgagroal_validate_limit_configuration(shmem))
    {
 #ifdef HAVE_LINUX
@@ -773,6 +838,7 @@ read_superuser_path:
 #endif
       errx(1, "Invalid LIMIT configuration");
    }
+   // Validate the users configuration
    if (pgagroal_validate_users_configuration(shmem))
    {
 #ifdef HAVE_LINUX
@@ -780,6 +846,7 @@ read_superuser_path:
 #endif
       errx(1, "Invalid USERS configuration");
    }
+   // Validate the frontend users configuration
    if (pgagroal_validate_frontend_users_configuration(shmem))
    {
 #ifdef HAVE_LINUX
@@ -787,6 +854,7 @@ read_superuser_path:
 #endif
       errx(1, "Invalid FRONTEND USERS configuration");
    }
+   // Validate the admins configuration
    if (pgagroal_validate_admins_configuration(shmem))
    {
 #ifdef HAVE_LINUX
@@ -795,13 +863,17 @@ read_superuser_path:
       errx(1, "Invalid ADMINS configuration");
    }
 
+   // Resize the shared memory segment
    if (pgagroal_resize_shared_memory(shmem_size, shmem, &tmp_size, &tmp_shmem))
    {
 #ifdef HAVE_LINUX
+      // Notify the systemd about the error in creating shared memory
       sd_notifyf(0, "STATUS=Error in creating shared memory");
 #endif
+      // Terminate the program with a non-zero exit status and display an error message
       errx(1, "Error in creating shared memory");
    }
+   // Destroy the old shared memory segment
    if (pgagroal_destroy_shared_memory(shmem, shmem_size) == -1)
    {
 #ifdef HAVE_LINUX
@@ -809,10 +881,12 @@ read_superuser_path:
 #endif
       errx(1, "Error in destroying shared memory");
    }
+   // Update the shared memory size and pointer with the new values
    shmem_size = tmp_size;
    shmem = tmp_shmem;
    config = (struct configuration*)shmem;
 
+   // Initialize the prometheus shared memory
    if (pgagroal_init_prometheus(&prometheus_shmem_size, &prometheus_shmem))
    {
 #ifdef HAVE_LINUX
@@ -821,6 +895,7 @@ read_superuser_path:
       errx(1, "Error in creating and initializing prometheus shared memory");
    }
 
+   // Initialize the prometheus cache shared memory
    if (pgagroal_init_prometheus_cache(&prometheus_cache_shmem_size, &prometheus_cache_shmem))
    {
 #ifdef HAVE_LINUX
@@ -829,6 +904,7 @@ read_superuser_path:
       errx(1, "Error in creating and initializing prometheus cache shared memory");
    }
 
+   // Get the file descriptor limit
    if (getrlimit(RLIMIT_NOFILE, &flimit) == -1)
    {
 #ifdef HAVE_LINUX
@@ -848,6 +924,7 @@ read_superuser_path:
       errx(1, "max_connections is larger than the file descriptor limit (%ld available)", (long)(flimit.rlim_cur - 30));
    }
 
+   // Check if the daemon mode is enabled // Search: tbd
    if (daemon)
    {
       if (config->log_type == PGAGROAL_LOGGING_TYPE_CONSOLE)
@@ -858,6 +935,7 @@ read_superuser_path:
          errx(1, "Daemon mode can't be used with console logging");
       }
 
+      // Fork the process to create a child process (daemon) // Search: tbd
       pid = fork();
 
       if (pid < 0)
@@ -883,22 +961,29 @@ read_superuser_path:
       }
    }
 
+   // Create a PID file or exit if it cannot be created
    create_pidfile_or_exit();
 
+   // Initialize the connection pool
    pgagroal_pool_init();
 
+   // Set the process title to "main"
    pgagroal_set_proc_title(argc, argv, "main", NULL);
 
    /* Bind Unix Domain Socket for file descriptor transfers */
    if (pgagroal_bind_unix_socket(config->unix_socket_dir, MAIN_UDS, &unix_management_socket))
    {
+      // Log a fatal error
       pgagroal_log_fatal("pgagroal: Could not bind to %s/%s", config->unix_socket_dir, MAIN_UDS);
 #ifdef HAVE_LINUX
+      // Notify the systemd
       sd_notifyf(0, "STATUS=Could not bind to %s/%s", config->unix_socket_dir, MAIN_UDS);
 #endif
+      // Jump to the error handling section
       goto error;
    }
 
+   // If there is no Unix socket, bind the PostgreSQL Unix Domain Socket // Search: tbd
    if (!has_unix_socket)
    {
       char pgsql[MISC_LENGTH];
@@ -916,6 +1001,7 @@ read_superuser_path:
       }
    }
 
+   // Bind main socket if there are no main sockets already
    /* Bind main socket */
    if (!has_main_sockets)
    {
@@ -929,6 +1015,7 @@ read_superuser_path:
       }
    }
 
+   // Check if the number of file descriptors exceeds the maximum allowed
    if (main_fds_length > MAX_FDS)
    {
       pgagroal_log_fatal("pgagroal: Too many descriptors %d", main_fds_length);
@@ -938,6 +1025,8 @@ read_superuser_path:
       goto error;
    }
 
+   // Search: tbd
+   // Initialize the libev event loop
    /* libev */
    main_loop = ev_default_loop(pgagroal_libev(config->libev));
    if (!main_loop)
@@ -950,6 +1039,8 @@ read_superuser_path:
       goto error;
    }
 
+   // Search: tbd
+   // Initialize signal watchers for various signals
    ev_signal_init((struct ev_signal*)&signal_watcher[0], shutdown_cb, SIGTERM);
    ev_signal_init((struct ev_signal*)&signal_watcher[1], reload_cb, SIGHUP);
    ev_signal_init((struct ev_signal*)&signal_watcher[2], shutdown_cb, SIGINT);
@@ -957,18 +1048,21 @@ read_superuser_path:
    ev_signal_init((struct ev_signal*)&signal_watcher[4], coredump_cb, SIGABRT);
    ev_signal_init((struct ev_signal*)&signal_watcher[5], shutdown_cb, SIGALRM);
 
+   // Start signal watchers
    for (int i = 0; i < 6; i++)
    {
       signal_watcher[i].slot = -1;
       ev_signal_start(main_loop, (struct ev_signal*)&signal_watcher[i]);
    }
 
+   // Initialize the main pipeline based on the configuration
    if (config->pipeline == PIPELINE_PERFORMANCE)
    {
       main_pipeline = performance_pipeline();
    }
    else if (config->pipeline == PIPELINE_SESSION)
    {
+      // Session pipeline checks if a Transport Layer Security (TLS) transport should be used.
       if (pgagroal_tls_valid())
       {
          pgagroal_log_fatal("pgagroal: Invalid TLS configuration");
@@ -1002,6 +1096,7 @@ read_superuser_path:
       goto error;
    }
 
+   // Initialize the main pipeline
    if (main_pipeline.initialize(shmem, &pipeline_shmem, &pipeline_shmem_size))
    {
       pgagroal_log_fatal("pgagroal: Pipeline initialize error (%d)", config->pipeline);
@@ -1011,10 +1106,12 @@ read_superuser_path:
       goto error;
    }
 
+   // Start management, Unix Domain Socket, and I/O services
    start_mgt();
    start_uds();
    start_io();
 
+   // Initialize and start idle_timeout background check, if configured
    if (config->idle_timeout > 0)
    {
       ev_periodic_init (&idle_timeout, idle_timeout_cb, 0.,
@@ -1022,6 +1119,7 @@ read_superuser_path:
       ev_periodic_start (main_loop, &idle_timeout);
    }
 
+   // Initialize and start max_connection_age background check, if configured
    if (config->max_connection_age > 0)
    {
       ev_periodic_init (&max_connection_age, max_connection_age_cb, 0.,
@@ -1029,6 +1127,7 @@ read_superuser_path:
       ev_periodic_start (main_loop, &max_connection_age);
    }
 
+   // Initialize and start background validation, if configured
    if (config->validation == VALIDATION_BACKGROUND)
    {
       ev_periodic_init (&validation, validation_cb, 0.,
@@ -1036,6 +1135,7 @@ read_superuser_path:
       ev_periodic_start (main_loop, &validation);
    }
 
+   // Initialize and start disconnect_client background check, if configured
    if (config->disconnect_client > 0)
    {
       ev_periodic_init (&disconnect_client, disconnect_client_cb, 0.,
@@ -1043,6 +1143,7 @@ read_superuser_path:
       ev_periodic_start (main_loop, &disconnect_client);
    }
 
+   // Initialize and start metrics service, if configured
    if (config->metrics > 0)
    {
       /* Bind metrics socket */
@@ -1067,6 +1168,8 @@ read_superuser_path:
       start_metrics();
    }
 
+   // Search: tbd
+   // Initialize and start management service, if configured
    if (config->management > 0)
    {
       /* Bind management socket */
@@ -1091,10 +1194,12 @@ read_superuser_path:
       start_management();
    }
 
+   // Log the version and starting information of pgagroal
    pgagroal_log_info("pgagroal: %s started on %s:%d",
                      PGAGROAL_VERSION,
                      config->host,
                      config->port);
+   // Log debug information for sockets
    for (int i = 0; i < main_fds_length; i++)
    {
       pgagroal_log_debug("Socket: %d", *(main_fds + i));
@@ -1109,15 +1214,20 @@ read_superuser_path:
    {
       pgagroal_log_debug("Remote management: %d", *(management_fds + i));
    }
+   // Search: tbd
+   // Log libev engines information
    pgagroal_libev_engines();
    pgagroal_log_debug("libev engine: %s", pgagroal_libev_engine(ev_backend(main_loop)));
+   // Log pipeline and related information
    pgagroal_log_debug("Pipeline: %d", config->pipeline);
    pgagroal_log_debug("Pipeline size: %lu", pipeline_shmem_size);
+   // Log the OpenSSL version
 #if (OPENSSL_VERSION_NUMBER < 0x10100000L)
    pgagroal_log_debug("%s", SSLeay_version(SSLEAY_VERSION));
 #else
    pgagroal_log_debug("%s", OpenSSL_version(OPENSSL_VERSION));
 #endif
+   // Log configuration and connection related information
    pgagroal_log_debug("Configuration size: %lu", shmem_size);
    pgagroal_log_debug("Max connections: %d", config->max_connections);
    pgagroal_log_debug("Known users: %d", config->number_of_users);
@@ -1125,11 +1235,13 @@ read_superuser_path:
    pgagroal_log_debug("Known admins: %d", config->number_of_admins);
    pgagroal_log_debug("Known superuser: %s", strlen(config->superuser.username) > 0 ? "Yes" : "No");
 
+   // Log a warning if no users are allowed
    if (!config->allow_unknown_users && config->number_of_users == 0)
    {
       pgagroal_log_warn("No users allowed");
    }
 
+   // Check if prefilling is possible and spawn a child process to do the prefill
    if (pgagroal_can_prefill())
    {
       if (!fork())
@@ -1140,23 +1252,29 @@ read_superuser_path:
    }
 
 #ifdef HAVE_LINUX
+   // Notify systemd that pgagroal is ready and running
    sd_notifyf(0,
               "READY=1\n"
               "STATUS=Running\n"
               "MAINPID=%lu", (unsigned long)getpid());
 #endif
 
+   // Run the main event loop while the program is running
    while (keep_running)
    {
+      // Search: tbd
       ev_loop(main_loop, 0);
    }
 
    pgagroal_log_info("pgagroal: shutdown");
 #ifdef HAVE_LINUX
+   // Notify systemd that pgagroal is stopping
    sd_notify(0, "STOPPING=1");
 #endif
+   // Shutdown the connection pool
    pgagroal_pool_shutdown();
 
+   // Send a signal to terminate all connected clients
    if (clients != NULL)
    {
       struct client* c = clients;
@@ -1167,27 +1285,34 @@ read_superuser_path:
       }
    }
 
+   // Shutdown various components of pgagroal
    shutdown_management();
    shutdown_metrics();
    shutdown_mgt();
    shutdown_io();
    shutdown_uds();
 
+   // Stop signal watchers
    for (int i = 0; i < 6; i++)
    {
       ev_signal_stop(main_loop, (struct ev_signal*)&signal_watcher[i]);
    }
 
+   // Destroy the main event loop
    ev_loop_destroy(main_loop);
 
+   // Free file descriptor arrays
    free(main_fds);
    free(metrics_fds);
    free(management_fds);
 
+   // Destroy the main pipeline
    main_pipeline.destroy(pipeline_shmem, pipeline_shmem_size);
 
+   // Remove the PID file
    remove_pidfile();
 
+   // Stop logging and destroy shared memory segments
    pgagroal_stop_logging();
    pgagroal_destroy_shared_memory(prometheus_shmem, prometheus_shmem_size);
    pgagroal_destroy_shared_memory(prometheus_cache_shmem, prometheus_cache_shmem_size);
@@ -1196,21 +1321,25 @@ read_superuser_path:
    return 0;
 
 error:
+   // In case of an error, remove the PID file and exit with an error code
    remove_pidfile();
    exit(1);
 }
 
+/* Callback function for the main event loop when a new connection is ready to be accepted */
 static void
 accept_main_cb(struct ev_loop* loop, struct ev_io* watcher, int revents)
 {
-   struct sockaddr_in6 client_addr;
-   socklen_t client_addr_length;
-   int client_fd;
-   char address[INET6_ADDRSTRLEN];
-   pid_t pid;
-   struct accept_io* ai;
-   struct configuration* config;
+   // Declare necessary variables
+   struct sockaddr_in6 client_addr; // IPv6 client address structure
+   socklen_t client_addr_length; // Length of the client address
+   int client_fd; // File descriptor of the accepted client connection
+   char address[INET6_ADDRSTRLEN]; // Buffer to store client's address as a string
+   pid_t pid; // Process ID of the forked child process
+   struct accept_io* ai; // Pointer to an accept_io structure (contains watcher info)
+   struct configuration* config; // Pointer to the configuration structure in shared memory
 
+   // If the received event is an invalid event
    if (EV_ERROR & revents)
    {
       pgagroal_log_debug("accept_main_cb: invalid event: %s", strerror(errno));
@@ -1218,15 +1347,20 @@ accept_main_cb(struct ev_loop* loop, struct ev_io* watcher, int revents)
       return;
    }
 
+   // Cast the watcher to an accept_io structure and get the configuration from shared memory
    ai = (struct accept_io*)watcher;
    config = (struct configuration*)shmem;
 
+   // Clear the memory of the address buffer
    memset(&address, 0, sizeof(address));
 
+   // Accept the new client connection and store the client's address information in client_addr
    client_addr_length = sizeof(client_addr);
    client_fd = accept(watcher->fd, (struct sockaddr*)&client_addr, &client_addr_length);
+   // Check if the accept() call failed
    if (client_fd == -1)
    {
+      // Handle the error accordingly (e.g., restart the listening port or log the error)
       if (accept_fatal(errno) && keep_running)
       {
          char pgsql[MISC_LENGTH];
@@ -1284,24 +1418,33 @@ accept_main_cb(struct ev_loop* loop, struct ev_io* watcher, int revents)
       return;
    }
 
+   // Update Prometheus metrics by incrementing the number of client sockets
    pgagroal_prometheus_client_sockets_add();
 
+   // Convert the client address to a human-readable string format
    pgagroal_get_address((struct sockaddr*)&client_addr, (char*)&address, sizeof(address));
 
+   // Log the client's address as a trace message
    pgagroal_log_trace("accept_main_cb: client address: %s", address);
 
+   // Fork a new process to handle the client connection
    pid = fork();
+   // If the fork failed
    if (pid == -1)
    {
       /* No process */
       pgagroal_log_error("Cannot create process");
    }
+   // Parent process
    else if (pid > 0)
    {
+      // Add the child process to the client list
       add_client(pid);
    }
+   // Child process
    else
    {
+      // Allocate memory for the client address string
       char* addr = calloc(1, strlen(address) + 1);
       if (addr == NULL)
       {
@@ -1310,12 +1453,16 @@ accept_main_cb(struct ev_loop* loop, struct ev_io* watcher, int revents)
       }
       memcpy(addr, address, strlen(address));
 
+      // Fork the event loop
       ev_loop_fork(loop);
+      // Close unnecessary file descriptors
       shutdown_ports();
+      // Start processing the client request in the child process
       /* We are leaving the socket descriptor valid such that the client won't reuse it */
       pgagroal_worker(client_fd, addr, ai->argv);
    }
 
+   // Close the client connection
    pgagroal_disconnect(client_fd);
 }
 
@@ -1549,7 +1696,7 @@ accept_mgt_cb(struct ev_loop* loop, struct ev_io* watcher, int revents)
          pgagroal_management_write_config_get(client_fd, payload_s);
          break;
       case MANAGEMENT_CONFIG_SET:
-         // this command has a secondary payload to extract, that is the configuration value
+         // This command has a secondary payload to extract, that is the configuration value
          pgagroal_management_read_payload(client_fd, id, &secondary_payload_i, &secondary_payload_s);
          pgagroal_log_debug("pgagroal: Management config-set for key <%s> setting value to <%s>", payload_s, secondary_payload_s);
          pgagroal_management_write_config_set(client_fd, payload_s, secondary_payload_s);

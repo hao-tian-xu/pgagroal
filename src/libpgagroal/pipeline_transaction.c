@@ -201,25 +201,33 @@ transaction_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
    struct message* msg = NULL;
    struct configuration* config = NULL;
 
+   // Retrieve the worker_io object from the watcher
    wi = (struct worker_io*)watcher;
+   // Retrieve the configuration from shared memory
    config = (struct configuration*)shmem;
 
+   // Check if the slot is not yet set
    /* We can't use the information from wi except from client_fd/client_ssl */
    if (slot == -1)
    {
+      // Try to get a connection
       pgagroal_tracking_event_basic(TRACKER_TX_GET_CONNECTION, &username[0], &database[0]);
       if (pgagroal_get_connection(&username[0], &database[0], true, true, &slot, &s_ssl))
       {
+         // Write a "pool full" message if getting the connection fails
          pgagroal_write_pool_full(wi->client_ssl, wi->client_fd);
          goto get_error;
       }
 
+      // Set the server file descriptor, SSL object, and slot in the worker_io object
       wi->server_fd = config->connections[slot].fd;
       wi->server_ssl = s_ssl;
       wi->slot = slot;
 
+      // Copy the application name to the connection
       memcpy(&config->connections[slot].appname[0], &appname[0], MAX_APPLICATION_NAME);
 
+      // Initialize the server_io event watcher for the transaction_server function
       ev_io_init((struct ev_io*)&server_io, transaction_server, config->connections[slot].fd, EV_READ);
       server_io.client_fd = wi->client_fd;
       server_io.server_fd = config->connections[slot].fd;
@@ -229,9 +237,12 @@ transaction_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
 
       fatal = false;
 
+      // Search: tbd
+      // Start the server_io event watcher
       ev_io_start(loop, (struct ev_io*)&server_io);
    }
 
+   // Read a message from the client
    if (wi->client_ssl == NULL)
    {
       status = pgagroal_read_socket_message(wi->client_fd, &msg);
@@ -240,14 +251,17 @@ transaction_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
    {
       status = pgagroal_read_ssl_message(wi->client_ssl, &msg);
    }
+   // Check if the message read was successful
    if (likely(status == MESSAGE_STATUS_OK))
    {
       pgagroal_prometheus_network_sent_add(msg->length);
 
+      // If the message is not a termination message
       if (likely(msg->kind != 'X'))
       {
          int offset = 0;
 
+         // Process the client message
          while (offset < msg->length)
          {
             if (next_client_message == 0)
@@ -255,8 +269,10 @@ transaction_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
                char kind = pgagroal_read_byte(msg->data + offset);
                int length = pgagroal_read_int32(msg->data + offset + 1);
 
+               // Check if the configuration is set to track prepared statements
                if (config->track_prepared_statements)
                {
+                  // Check if the message is a prepared statement message
                   /* The P message tell us the prepared statement */
                   if (kind == 'P')
                   {
@@ -271,6 +287,7 @@ transaction_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
                /* The Q and E message tell us the execute of the simple query and the prepared statement */
                if (kind == 'Q' || kind == 'E')
                {
+                  // Update the Prometheus metric for query count and slot-specific query count
                   pgagroal_prometheus_query_count_add();
                   pgagroal_prometheus_query_count_specified_add(wi->slot);
                }
@@ -283,6 +300,7 @@ transaction_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
                }
                else
                {
+                  // Update the offset based on the remaining next_client_message value
                   next_client_message = length + 1 - (msg->length - offset);
                   offset = msg->length;
                }
@@ -294,6 +312,7 @@ transaction_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
             }
          }
 
+         // Write the message to the server
          if (wi->server_ssl == NULL)
          {
             status = pgagroal_write_socket_message(wi->server_fd, msg);
@@ -302,10 +321,12 @@ transaction_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
          {
             status = pgagroal_write_ssl_message(wi->server_ssl, msg);
          }
+         // Check if the message writing to the server was unsuccessful
          if (unlikely(status == MESSAGE_STATUS_ERROR))
          {
             if (config->failover)
             {
+               // Perform failover if the configuration allows it
                pgagroal_server_failover(slot);
                pgagroal_write_client_failover(wi->client_ssl, wi->client_fd);
                pgagroal_prometheus_failed_servers();
@@ -318,21 +339,25 @@ transaction_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
             }
          }
       }
+      // If the message is a termination message
       else if (msg->kind == 'X')
       {
          saw_x = true;
          running = 0;
       }
    }
+   // Handle the case where the message read status is zero
    else if (status == MESSAGE_STATUS_ZERO)
    {
       goto client_done;
    }
+   // Handle client errors
    else
    {
       goto client_error;
    }
 
+   // Break the loop and stop processing events after a single iteration
    ev_break(loop, EVBREAK_ONE);
    return;
 
@@ -342,6 +367,7 @@ client_done:
                       strerror(errno), wi->client_fd, status);
    errno = 0;
 
+   // Set the exit code based on whether the termination message was received
    if (saw_x)
    {
       exit_code = WORKER_SUCCESS;
