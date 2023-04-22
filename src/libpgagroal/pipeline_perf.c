@@ -109,6 +109,7 @@ performance_periodic(void)
 {
 }
 
+// The performance_client function is called when there's an event on the client side of the connection in the performance pipeline
 static void
 performance_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
 {
@@ -117,13 +118,17 @@ performance_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
    struct message* msg = NULL;
    struct configuration* config = NULL;
 
+   // Retrieve the worker_io structure from the watcher
    wi = (struct worker_io*)watcher;
 
+   // Read a message from the client socket
    status = pgagroal_read_socket_message(wi->client_fd, &msg);
    if (likely(status == MESSAGE_STATUS_OK))
    {
+      // If the message kind is not 'X' (termination), forward the message to the server
       if (likely(msg->kind != 'X'))
       {
+         // Write the message to the server socket or SSL connection, depending on whether SSL is used
          if (wi->server_ssl == NULL)
          {
             status = pgagroal_write_socket_message(wi->server_fd, msg);
@@ -132,36 +137,43 @@ performance_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
          {
             status = pgagroal_write_ssl_message(wi->server_ssl, msg);
          }
+         // If writing the message to the server failed, go to the server_error label
          if (unlikely(status != MESSAGE_STATUS_OK))
          {
             goto server_error;
          }
       }
+      // If the message kind is 'X', set the saw_x flag to true and stop the event loop by setting running to 0
       else if (msg->kind == 'X')
       {
          saw_x = true;
          running = 0;
       }
    }
+   // If the message read status is MESSAGE_STATUS_ZERO, go to the client_done label
    else if (status == MESSAGE_STATUS_ZERO)
    {
       goto client_done;
    }
+   // If an error occurred while reading the message, go to the client_error label
    else
    {
       goto client_error;
    }
 
+   // Break the libev event loop with EVBREAK_ONE
    ev_break (loop, EVBREAK_ONE);
    return;
 
 client_done:
    config = (struct configuration*)shmem;
+   // Log client disconnection information
    pgagroal_log_debug("[C] Client done (slot %d database %s user %s): %s (socket %d status %d)",
                       wi->slot, config->connections[wi->slot].database, config->connections[wi->slot].username,
                       strerror(errno), wi->client_fd, status);
    errno = 0;
 
+   // Set the exit code based on whether the termination request 'X' was received or not
    if (saw_x)
    {
       exit_code = WORKER_SUCCESS;
@@ -171,6 +183,7 @@ client_done:
       exit_code = WORKER_SERVER_FAILURE;
    }
 
+   // Stop the event loop and break it with EVBREAK_ALL
    running = 0;
    ev_break(loop, EVBREAK_ALL);
    return;
@@ -183,7 +196,9 @@ client_error:
    pgagroal_log_message(msg);
    errno = 0;
 
+   // Set the exit code to WORKER_CLIENT_FAILURE
    exit_code = WORKER_CLIENT_FAILURE;
+   // Stop the event loop and break it with EVBREAK_ALL
    running = 0;
    ev_break(loop, EVBREAK_ALL);
    return;
@@ -196,7 +211,9 @@ server_error:
    pgagroal_log_message(msg);
    errno = 0;
 
+   // Set the exit code to WORKER_SERVER_FAILURE
    exit_code = WORKER_SERVER_FAILURE;
+   // Stop the event loop and break it with EVBREAK_ALL
    running = 0;
    ev_break(loop, EVBREAK_ALL);
    return;
