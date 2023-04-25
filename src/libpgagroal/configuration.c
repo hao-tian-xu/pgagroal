@@ -204,23 +204,29 @@ pgagroal_read_configuration(void* shm, char* filename, bool emitWarnings)
    int lineno = 0;
    int return_value = 0;
 
+   // memo: Open the configuration file for reading.
    file = fopen(filename, "r");
 
+   // If the file does not exist, return the appropriate error status.
    if (!file)
    {
       return PGAGROAL_CONFIGURATION_STATUS_FILE_NOT_FOUND;
    }
 
+   // Initialize local variables.
    memset(&section, 0, LINE_LENGTH);
    memset(&sections, 0, sizeof(struct config_section) * NUMBER_OF_SERVERS + 1);
    config = (struct configuration*)shm;
 
+   // Read the file line by line.
    while (fgets(line, sizeof(line), file))
    {
       lineno++;
 
+      // memo: If the line is not empty and not a comment, process it.
       if (!is_empty_string(line) && !is_comment_line(line))
       {
+         // If the line is a section header, update the current section.
          if (section_line(line, section))
          {
             // check we don't overflow the number of available sections
@@ -244,6 +250,7 @@ pgagroal_read_configuration(void* shm, char* filename, bool emitWarnings)
 
             idx_sections++;
 
+            // If the section is not the main section, update the server configuration.
             if (strcmp(section, PGAGROAL_MAIN_INI_SECTION))
             {
                if (idx_server > 0 && idx_server <= NUMBER_OF_SERVERS)
@@ -255,6 +262,7 @@ pgagroal_read_configuration(void* shm, char* filename, bool emitWarnings)
                   printf("Maximum number of servers exceeded\n");
                }
 
+               // Initialize the server structure.
                memset(&srv, 0, sizeof(struct server));
                atomic_init(&srv.state, SERVER_NOTINIT);
                memcpy(&srv.name, &section, strlen(section));
@@ -262,8 +270,10 @@ pgagroal_read_configuration(void* shm, char* filename, bool emitWarnings)
                idx_server++;
             }
          }
+         // If the section is the main section
          else
          {
+            // Extract key-value pairs from the line.
             extract_key_value(line, &key, &value);
 
             if (key && value)
@@ -278,6 +288,7 @@ pgagroal_read_configuration(void* shm, char* filename, bool emitWarnings)
                   unknown = true;
                }
 
+               // If the key is unknown and emitWarnings is enabled, display a warning message.
                if (unknown && emitWarnings)
                {
                   // we cannot use logging here...
@@ -302,6 +313,7 @@ pgagroal_read_configuration(void* shm, char* filename, bool emitWarnings)
                   }
                }
 
+               // Free the memory allocated for key and value.
                free(key);
                free(value);
                key = NULL;
@@ -311,13 +323,16 @@ pgagroal_read_configuration(void* shm, char* filename, bool emitWarnings)
       }
    }
 
+   // If the server structure is not empty, copy it to the configuration structure.
    if (strlen(srv.name) > 0)
    {
       memcpy(&(config->servers[idx_server - 1]), &srv, sizeof(struct server));
    }
 
+   // Set the number_of_servers in the configuration structure.
    config->number_of_servers = idx_server;
 
+   // memo: Close the configuration file.
    fclose(file);
 
    // check there is at least one main section
@@ -342,6 +357,7 @@ pgagroal_read_configuration(void* shm, char* filename, bool emitWarnings)
             continue;
          }
 
+         // Check if section names match.
          if (!strncmp(sections[i].name, sections[j].name, LINE_LENGTH))
          {
             // cannot log here ...
@@ -356,6 +372,7 @@ pgagroal_read_configuration(void* shm, char* filename, bool emitWarnings)
       }
    }
 
+   // Return the total number of errors found in the configuration file.
    return return_value;
 }
 
@@ -390,7 +407,7 @@ pgagroal_validate_configuration(void* shm, bool has_unix_socket, bool has_main_s
 
    if (!has_unix_socket)
    {
-      if (strlen(config->unix_socket_dir) == 0)
+      if (strlen(config->unix_socket_dir) == 0) // TODO: when init
       {
          pgagroal_log_fatal("pgagroal: No unix_socket_dir defined");
          return 1;
