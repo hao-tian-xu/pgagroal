@@ -101,25 +101,25 @@ struct client
    struct client* next;
 };
 
-static volatile int keep_running = 1;
-static char** argv_ptr;
-static struct ev_loop* main_loop = NULL;
-static struct accept_io io_main[MAX_FDS];
-static struct accept_io io_mgt;
-static struct accept_io io_uds;
-static int* main_fds = NULL;
-static int main_fds_length = -1;
-static int unix_management_socket = -1;
-static int unix_pgsql_socket = -1;
-static struct accept_io io_metrics[MAX_FDS];
-static int* metrics_fds = NULL;
-static int metrics_fds_length = -1;
-static struct accept_io io_management[MAX_FDS];
-static int* management_fds = NULL;
-static int management_fds_length = -1;
-static struct pipeline main_pipeline;
-static int known_fds[MAX_NUMBER_OF_CONNECTIONS];
-static struct client* clients = NULL;
+static volatile int keep_running = 1;              // a volatile integer flag that controls the main loop's execution.
+static char** argv_ptr;                            // a pointer to the command-line arguments passed to the main function.
+static struct ev_loop* main_loop = NULL;           // a pointer to the main event loop used by the libev library.
+static struct accept_io io_main[MAX_FDS];          // an array of accept_io structures, storing information related to the main file descriptors (sockets).
+static struct accept_io io_mgt;                    // an accept_io structure that stores information related to the management file descriptor (socket). // Research: difference from io_management
+static struct accept_io io_uds;                    // an accept_io structure that stores information related to the Unix domain socket file descriptor.
+static int* main_fds = NULL;                       // an array of integers that holds the main file descriptors (sockets) for incoming connections.
+static int main_fds_length = -1;                   // an integer that holds the length of the 'main_fds' array.
+static int unix_management_socket = -1;            // an integer that holds the file descriptor for the Unix management socket.
+static int unix_pgsql_socket = -1;                 // an integer that holds the file descriptor for the Unix PostgreSQL socket. // Research: tbd
+static struct accept_io io_metrics[MAX_FDS];       // an array of accept_io structures, storing information related to the metrics file descriptors (sockets).
+static int* metrics_fds = NULL;                    // an array of integers that holds the metrics file descriptors (sockets) for incoming connections. // Research: tbd
+static int metrics_fds_length = -1;                // an integer that holds the length of the 'metrics_fds' array.
+static struct accept_io io_management[MAX_FDS];    // an array of accept_io structures, storing information related to the management file descriptors (sockets).
+static int* management_fds = NULL;                 // an array of integers that holds the management file descriptors (sockets) for incoming connections.
+static int management_fds_length = -1;             // an integer that holds the length of the 'management_fds' array.
+static struct pipeline main_pipeline;              // a pipeline structure that represents the main pipeline for handling incoming connections and processing requests.
+static int known_fds[MAX_NUMBER_OF_CONNECTIONS];   // an array of integers that holds the file descriptors of known connections.
+static struct client* clients = NULL;              // a pointer to an array of client structures, representing all connected clients.
 
 static void
 start_mgt(void)
@@ -303,7 +303,8 @@ main(int argc, char** argv)
    char* frontend_users_path = NULL;
    char* admins_path = NULL;
    char* superuser_path = NULL;
-   // Daemon flag and process id variables.
+   // Daemon flag and process id variables. // Research: tbd
+   // When set to true, the process will detach itself from the terminal and run in the background, providing its services without user interaction.
    bool daemon = false;
    pid_t pid, sid;
 #ifdef HAVE_LINUX
@@ -311,17 +312,26 @@ main(int argc, char** argv)
    int sds;
 #endif
    // Socket-related flags.
+   // memo: A Unix Domain Socket, also known as IPC (Inter-Process Communication) socket or local socket, is a communication mechanism that enables processes running on the same host (machine) to exchange data. Unlike network sockets (e.g., TCP/IP sockets), which facilitate communication between processes across different hosts using a network protocol, Unix Domain Sockets use the file system for addressing and don't involve any network overhead.
+   //    Unix Domain Sockets provide a way for bidirectional communication between processes on the same host, and they can be more efficient than network sockets in this context since they bypass the network stack. They are typically represented as special files within the file system, with a specific path used as the socket's address.
    bool has_unix_socket = false;
+   // memo: The term "main sockets" refers to the primary sockets the application uses for accepting incoming connections. These sockets are typically network sockets (e.g., TCP/IP sockets) that listen for incoming connections from clients on a specific IP address and port number.
+   //    The application binds to the main sockets to serve incoming client requests. For example, a database proxy application might listen for incoming client connections on a particular IP address and port. When clients connect to these main sockets, the application can then manage, process, and forward the requests to the appropriate backend server.
    bool has_main_sockets = false;
    // Shared memory-related variables.
    void* tmp_shmem = NULL;
    // Event loop and signal handling variables.
+   // memo: The signal_watcher structures in the provided context are instances of the signal_info struct, which is used to store information about various signals the program needs to handle. These structures are typically used with an event-driven framework, such as libev, to watch for specific signals and execute a callback function when they are triggered.
    struct signal_info signal_watcher[6];
    struct ev_periodic idle_timeout;
    struct ev_periodic max_connection_age;
    struct ev_periodic validation;
    struct ev_periodic disconnect_client;
    // Resource limit variable.
+   // memo: rlimit is a structure defined in the sys/resource.h header file on Unix-like systems. It is used to represent the resource limits that can be applied to a process. Each resource limit consists of a soft limit and a hard limit. The soft limit is the value that the kernel enforces for the corresponding resource, while the hard limit represents an absolute maximum value that cannot be exceeded.
+   //    the flimit variable of type struct rlimit is used to store the resource limits related to file descriptors for the process. Specifically, it is used to change the maximum number of open file descriptors that the process is allowed to have.
+   //    In a connection pooling application like pgagroal, there can be a large number of open file descriptors due to client connections, backend connections, and other resources. By adjusting the rlimit for file descriptors, you can ensure that the process can handle the required number of connections without running into issues caused by reaching the default file descriptor limit.
+   //    The flimit variable is typically used in conjunction with the getrlimit() and setrlimit() system calls to read the current limits and modify them as needed before the main part of the application starts.
    struct rlimit flimit;
    // Shared memory-related variables.
    size_t shmem_size;
@@ -924,7 +934,7 @@ read_superuser_path:
       errx(1, "max_connections is larger than the file descriptor limit (%ld available)", (long)(flimit.rlim_cur - 30));
    }
 
-   // Check if the daemon mode is enabled // Research: tbd
+   // Check if the daemon mode is enabled
    if (daemon)
    {
       if (config->log_type == PGAGROAL_LOGGING_TYPE_CONSOLE)
@@ -970,7 +980,7 @@ read_superuser_path:
    // Set the process title to "main"
    pgagroal_set_proc_title(argc, argv, "main", NULL);
 
-   /* Bind Unix Domain Socket for file descriptor transfers */
+   /* Bind Unix Domain Socket for file descriptor transfers */ // TODO: what file descriptors are being transferred
    if (pgagroal_bind_unix_socket(config->unix_socket_dir, MAIN_UDS, &unix_management_socket))
    {
       // Log a fatal error
@@ -983,7 +993,9 @@ read_superuser_path:
       goto error;
    }
 
-   // If there is no Unix socket, bind the PostgreSQL Unix Domain Socket // Research: tbd
+   // If there is no Unix socket, bind the PostgreSQL Unix Domain Socket
+   // memo: PostgreSQL can listen for client connections on both TCP/IP and Unix Domain Sockets. By default, PostgreSQL creates a Unix Domain Socket in the /tmp or /var/run/postgresql directory, depending on the system and PostgreSQL version. The socket's name follows the ".s.PGSQL.<port>" pattern, where "<port>" is the port number on which PostgreSQL listens for connections.
+   //    When a client (e.g., pgagroal) wants to connect to a PostgreSQL server using a Unix Domain Socket, it has to specify the socket's directory and name. The client then creates its own socket and connects it to the server's socket. Once connected, the client and server can communicate with each other by exchanging data through the sockets.
    if (!has_unix_socket)
    {
       char pgsql[MISC_LENGTH];
@@ -1007,7 +1019,7 @@ read_superuser_path:
    {
       if (pgagroal_bind(config->host, config->port, &main_fds, &main_fds_length))
       {
-         pgagroal_log_fatal("pgagroal: Could not bind to %s:%d", config->host, config->port);
+         pgagroal_log_fatal("pgagroal: Could not bind to %s:%d", config->host, config->port); // memo: bind to main host:port
 #ifdef HAVE_LINUX
          sd_notifyf(0, "STATUS=Could not bind to %s:%d", config->host, config->port);
 #endif
@@ -1039,7 +1051,6 @@ read_superuser_path:
       goto error;
    }
 
-   // Research: tbd
    // Initialize signal watchers for various signals
    ev_signal_init((struct ev_signal*)&signal_watcher[0], shutdown_cb, SIGTERM);
    ev_signal_init((struct ev_signal*)&signal_watcher[1], reload_cb, SIGHUP);
@@ -2209,7 +2220,7 @@ create_pidfile_or_exit(void)
       fd = open(config->pidfile, O_WRONLY | O_CREAT | O_EXCL, 0640);
       if (errno == EEXIST)
       {
-         errx(1, "PID file <%s> exists, is there another instance running ?", config->pidfile);
+         errx(1, "PID file <%s> exists, is there another instance running ?", config->pidfile); // memo: create pid file error
       }
       else if (errno == EACCES)
       {
