@@ -123,7 +123,6 @@ transaction_start(struct ev_loop* loop, struct worker_io* w)
    memset(&p, 0, sizeof(p));
    snprintf(&p[0], sizeof(p), ".s.%d", getpid());
 
-   // Research: tbd
    // Bind to the UNIX socket
    if (pgagroal_bind_unix_socket(config->unix_socket_dir, &p[0], &unix_socket))
    {
@@ -131,7 +130,6 @@ transaction_start(struct ev_loop* loop, struct worker_io* w)
       goto error;
    }
 
-   // TODO: where are these connections initialized?
    // Copy file descriptors from the shared configuration into a local array
    for (int i = 0; i < config->max_connections; i++)
    {
@@ -251,7 +249,6 @@ transaction_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
 
       fatal = false;
 
-      // Research: tbd
       // Start the server_io event watcher
       ev_io_start(loop, (struct ev_io*)&server_io);
    }
@@ -556,7 +553,6 @@ transaction_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
             // Stop the server_io event watcher
             ev_io_stop(loop, (struct ev_io*)&server_io);
 
-            // Research: tbd
             // If deallocate flag is set, send deallocate all message to the server
             if (deallocate)
             {
@@ -564,7 +560,6 @@ transaction_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
                deallocate = false;
             }
 
-            // TODO: minor
             // Send a tracking event for returning the connection to the pool
             pgagroal_tracking_event_slot(TRACKER_TX_RETURN_CONNECTION, slot);
             // Return the connection to the pool
@@ -582,7 +577,6 @@ transaction_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
          // If there is a transaction state message indicating not in a transaction, and the slot is valid
          if (has_z && !in_tx && slot != -1)
          {
-            // Research: tbd
             // Stop the server_io event watcher
             ev_io_stop(loop, (struct ev_io*)&server_io);
 
@@ -735,7 +729,6 @@ accept_cb(struct ev_loop* loop, struct ev_io* watcher, int revents)
          break;
    }
 
-   // Research: tbd
    // Close the client connection
    pgagroal_disconnect(client_fd);
 }

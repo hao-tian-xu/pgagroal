@@ -74,7 +74,7 @@ struct pipeline performance_pipeline(void);
  * Get the session pipeline
  * @return The structure
  */
-struct pipeline session_pipeline(void); // memo
+struct pipeline session_pipeline(void);
 
 /**
  * Get the transaction pipeline

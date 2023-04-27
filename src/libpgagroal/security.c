@@ -60,22 +60,6 @@
 #include <sys/types.h>
 
 
-// memo: SSL (Secure Sockets Layer) and TLS (Transport Layer Security) are cryptographic protocols designed to provide secure communication over a computer network, primarily the internet. They are widely used to protect sensitive data transmitted between a client (e.g., web browser) and a server (e.g., web server).
-//    SSL was the original protocol developed by Netscape in the mid-1990s. TLS, its successor, was introduced in 1999 by the Internet Engineering Task Force (IETF) as an improvement over SSL. Over time, multiple versions of both SSL and TLS have been released, with TLS gradually replacing SSL. The latest version of TLS is 1.3, released in 2018, while the last version of SSL was 3.0.
-//    SSL/TLS works by providing the following security properties:
-//       1. Confidentiality: SSL/TLS encrypts data exchanged between the client and server, ensuring that eavesdroppers cannot read the transmitted information.
-//       2. Integrity: SSL/TLS ensures that the data sent between the client and server has not been tampered with or altered during transmission. This is achieved through the use of cryptographic hash functions and message authentication codes (MACs).
-//       3. Authentication: SSL/TLS provides a mechanism for authenticating the communicating parties. Typically, servers are authenticated using digital certificates, which are issued by trusted third-party organizations called Certificate Authorities (CAs). Clients can also be authenticated using client-side certificates, though this is less common.
-//    The SSL/TLS handshake is the process by which the client and server establish a secure connection. The handshake involves several steps:
-//       1. The client sends a "ClientHello" message to the server, indicating its SSL/TLS version, supported cryptographic algorithms, and other preferences.
-//       2. The server responds with a "ServerHello" message, selecting the best SSL/TLS version and cryptographic algorithms supported by both the client and server. The server also sends its digital certificate.
-//       3. The client verifies the server's certificate, ensuring it is issued by a trusted CA and has not expired. This step helps to establish the server's identity.
-//       4. The client and server exchange cryptographic key material, using a key exchange algorithm (e.g., RSA, Diffie-Hellman, ECDHE) to establish a shared secret key.
-//       5. The client and server use the shared secret key to derive encryption and integrity keys, which will be used to protect the data exchanged during the secure session.
-//       6. The client and server send "Finished" messages to each other, confirming that the handshake was successful and the secure session can begin.
-//    Once the SSL/TLS handshake is complete, the client and server can securely exchange data, which is encrypted and integrity-protected using the established keys.
-
-
 static int get_auth_type(struct message* msg, int* auth_type);
 static int compare_auth_response(struct message* orig, struct message* response, int auth_type);
 
@@ -189,7 +173,6 @@ pgagroal_authenticate(int client_fd, char* address, int* slot, SSL** client_ssl,
    request = pgagroal_get_request(msg);
 
    // Check if the request is a cancel request (80877102).
-   // memo: A cancel request is a special type of request sent by a client to the server to request the cancellation of a currently running query or command. This request is typically used when a client decides to abort a long-running query or when a user wants to stop the execution of a command that is taking too much time.
    /* Cancel request: 80877102 */
    if (request == 80877102)
    {
@@ -205,7 +188,6 @@ pgagroal_authenticate(int client_fd, char* address, int* slot, SSL** client_ssl,
          goto error;
       }
 
-      // TODO: should we use SSL here?
       // Connect to the server using a UNIX socket or a regular socket, based on the configuration.
       if (config->servers[server].host[0] == '/')
       {
@@ -240,13 +222,11 @@ pgagroal_authenticate(int client_fd, char* address, int* slot, SSL** client_ssl,
 
       pgagroal_disconnect(server_fd);
 
-      // Return an authentication failure due to a bad password. // TODO: why
+      // Return an authentication failure due to a bad password.
       return AUTH_BAD_PASSWORD;
    }
 
    // Check if the request is a GSS request (80877104).
-   // memo: A GSS (Generic Security Services) request refers to a client request for authentication using the Generic Security Services Application Program Interface (GSS-API). GSS-API is an API used by applications to provide security services, such as authentication and message integrity, in a platform-independent and generic way.
-   //    GSS requests are used when the client wants to authenticate using Kerberos, a network authentication protocol that provides strong authentication for client/server applications. When a client sends a GSS request, it is requesting to establish a secure connection with the server using the GSS-API, and specifically the Kerberos authentication mechanism. The server can then respond with the required information to proceed with the authentication process.
    /* GSS request: 80877104 */
    if (request == 80877104)
    {
@@ -270,7 +250,6 @@ pgagroal_authenticate(int client_fd, char* address, int* slot, SSL** client_ssl,
 
    // MAIN: TLS 2 (client - pgagroal)
    // Check if the request is an SSL request (80877103).
-   // memo: An SSL request (with the code 80877103) is a request sent by the client to the server to initiate a secure connection using SSL/TLS (Secure Socket Layer/Transport Layer Security) encryption.
    /* SSL request: 80877103 */
    if (request == 80877103)
    {
@@ -281,15 +260,15 @@ pgagroal_authenticate(int client_fd, char* address, int* slot, SSL** client_ssl,
       {
          SSL_CTX* ctx = NULL;
 
-         // Create an SSL context for the server. TODO: pgagroal server?
+         // Create an SSL context for the server.
          /* We are acting as a server against the client */
-         if (create_ssl_ctx(false, &ctx)) // TODO: understand the function
+         if (create_ssl_ctx(false, &ctx))
          {
             goto error;
          }
 
          // Create an SSL server instance with the provided context and client file descriptor.
-         if (create_ssl_server(ctx, client_fd, &c_ssl)) // TODO: understand the function - what does server here mean? -> we are acting as a server
+         if (create_ssl_server(ctx, client_fd, &c_ssl))
          {
             pgagroal_log_debug("authenticate: connection error");
             pgagroal_write_connection_refused(NULL, client_fd);
@@ -309,7 +288,7 @@ pgagroal_authenticate(int client_fd, char* address, int* slot, SSL** client_ssl,
          }
          pgagroal_free_message(msg);
 
-         // Perform the SSL handshake with the client. // TODO: handshake
+         // Perform the SSL handshake with the client.
          status = SSL_accept(c_ssl);
          if (status != 1)
          {
@@ -350,9 +329,6 @@ pgagroal_authenticate(int client_fd, char* address, int* slot, SSL** client_ssl,
    }
 
    // Check if the request is OK (196608). (possibly after a GSS or SSL request)
-   // memo: An OK request (with the code 196608) represents a successful PostgreSQL startup message received from the client. This message is sent by the client during the initial connection process, and it contains essential information such as the requested protocol version, the database name, the username for authentication, and other connection-related parameters.
-   //    Upon receiving an OK request, the server proceeds to process the provided information and determine whether the client is allowed to connect. This typically involves checking the client's IP address, database, and username against a set of rules specified in the configuration, as well as verifying the client's credentials and performing any necessary authentication steps. If everything checks out, the server establishes the connection, and the client can proceed to send SQL queries and other commands to interact with the database.
-   //    An OK request is represented by the numeric value 196608, which is a specific code associated with a successful PostgreSQL startup message.
    /* 196608 -> Ok */
    if (request == 196608)
    {
@@ -455,7 +431,7 @@ pgagroal_authenticate(int client_fd, char* address, int* slot, SSL** client_ssl,
 
          // MAIN: TLS 3
          // Try to use an existing pooled connection.
-         ret = use_pooled_connection(c_ssl, client_fd, *slot, username, database, hba_method, server_ssl); // TODO
+         ret = use_pooled_connection(c_ssl, client_fd, *slot, username, database, hba_method, server_ssl);
          if (ret == AUTH_BAD_PASSWORD)
          {
             goto bad_password;
@@ -1328,7 +1304,6 @@ compare_auth_response(struct message* orig, struct message* response, int auth_t
    return 1;
 }
 
-// TODO: understand this function
 static int
 use_pooled_connection(SSL* c_ssl, int client_fd, int slot, char* username, char* database, int hba_method, SSL** server_ssl)
 {
@@ -1528,11 +1503,11 @@ use_unpooled_connection(struct message* request_msg, SSL* c_ssl, int client_fd, 
    // HERE: Primary
    // HERE: Primary - check other commits to see if the pgagroal - postgres TLS connection is already supported
    // MAIN: TLS 4
-   // Establish a TLS connection with the client if necessary // TODO: client? -> We are acting as a client against the server
+   // Establish a TLS connection with the client if necessary
    /* TLS support */
    establish_client_tls_connection(config->connections[slot].server, server_fd, server_ssl);
 
-   // Send the authentication request to the PostgreSQL server // TODO
+   // Send the authentication request to the PostgreSQL server
    /* Send auth request to PostgreSQL */
    pgagroal_log_trace("authenticate: client auth request (%d)", client_fd);
    status = pgagroal_write_message(*server_ssl, server_fd, request_msg);
@@ -1551,7 +1526,7 @@ use_unpooled_connection(struct message* request_msg, SSL* c_ssl, int client_fd, 
       goto error;
    }
 
-   // Determine the authentication type required by the server // TODO
+   // Determine the authentication type required by the server
    get_auth_type(msg, &auth_type);
    pgagroal_log_trace("authenticate: auth type %d", auth_type);
 
@@ -1653,7 +1628,7 @@ use_unpooled_connection(struct message* request_msg, SSL* c_ssl, int client_fd, 
          goto error;
       }
 
-      // Perform server-side authentication // TODO
+      // Perform server-side authentication
       if (server_authenticate(auth_msg, auth_type, username, get_password(username), slot, *server_ssl))
       {
          // If the authentication fails, send a connection refused message to the client
@@ -5812,7 +5787,7 @@ error:
 }
 
 static int
-establish_client_tls_connection(int server, int fd, SSL** ssl) // TODO: client? -> We are acting as a client against the server
+establish_client_tls_connection(int server, int fd, SSL** ssl)
 {
    bool use_ssl = false;
    struct configuration* config = NULL;

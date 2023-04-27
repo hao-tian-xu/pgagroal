@@ -621,7 +621,7 @@ bind_host(const char* hostname, int port, int** fds, int* length)
          continue;
       }
 
-      if (config->non_blocking) // memo
+      if (config->non_blocking)
       {
          if (pgagroal_socket_nonblocking(sockfd, true))
          {

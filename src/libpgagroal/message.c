@@ -45,8 +45,8 @@
 static int read_message(int socket, bool block, int timeout, struct message** msg);
 static int write_message(int socket, struct message* msg);
 
-static int ssl_read_message(SSL* ssl, int timeout, struct message** msg); // memo
-static int ssl_write_message(SSL* ssl, struct message* msg); // memo
+static int ssl_read_message(SSL* ssl, int timeout, struct message** msg);
+static int ssl_write_message(SSL* ssl, struct message* msg);
 
 int
 pgagroal_read_block_message(SSL* ssl, int socket, struct message** msg)
@@ -232,7 +232,6 @@ pgagroal_write_notice(SSL* ssl, int socket)
    return ssl_write_message(ssl, &msg);
 }
 
-// TODO: understand this function
 int
 pgagroal_write_tls(SSL* ssl, int socket)
 {
@@ -1366,7 +1365,6 @@ write_message(int socket, struct message* msg)
    return MESSAGE_STATUS_ERROR;
 }
 
-// TODO: where is it called
 // Securely reading a message over SSL/TLS.
 static int
 ssl_read_message(SSL* ssl, int timeout, struct message** msg)
@@ -1463,7 +1461,6 @@ ssl_read_message(SSL* ssl, int timeout, struct message** msg)
    return MESSAGE_STATUS_ERROR;
 }
 
-// TODO: where is it called
 // Securely sending a message over SSL/TLS.
 static int
 ssl_write_message(SSL* ssl, struct message* msg)

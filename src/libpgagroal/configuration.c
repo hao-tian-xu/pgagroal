@@ -204,7 +204,6 @@ pgagroal_read_configuration(void* shm, char* filename, bool emitWarnings)
    int lineno = 0;
    int return_value = 0;
 
-   // memo: Open the configuration file for reading.
    file = fopen(filename, "r");
 
    // If the file does not exist, return the appropriate error status.
@@ -223,7 +222,6 @@ pgagroal_read_configuration(void* shm, char* filename, bool emitWarnings)
    {
       lineno++;
 
-      // memo: If the line is not empty and not a comment, process it.
       if (!is_empty_string(line) && !is_comment_line(line))
       {
          // If the line is a section header, update the current section.
@@ -332,7 +330,6 @@ pgagroal_read_configuration(void* shm, char* filename, bool emitWarnings)
    // Set the number_of_servers in the configuration structure.
    config->number_of_servers = idx_server;
 
-   // memo: Close the configuration file.
    fclose(file);
 
    // check there is at least one main section
@@ -407,7 +404,7 @@ pgagroal_validate_configuration(void* shm, bool has_unix_socket, bool has_main_s
 
    if (!has_unix_socket)
    {
-      if (strlen(config->unix_socket_dir) == 0) // TODO: when init
+      if (strlen(config->unix_socket_dir) == 0)
       {
          pgagroal_log_fatal("pgagroal: No unix_socket_dir defined");
          return 1;

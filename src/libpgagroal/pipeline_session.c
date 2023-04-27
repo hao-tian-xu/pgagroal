@@ -49,7 +49,6 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
-// TODO: understand the file
 
 static int  session_initialize(void*, void**, size_t*);
 static void session_start(struct ev_loop* loop, struct worker_io*);
@@ -318,7 +317,7 @@ session_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
    // Update the activity status for the current client.
    client_active(wi->slot);
 
-   // Read the message from the client, using SSL if applicable. // TODO: section
+   // Read the message from the client, using SSL if applicable.
    if (wi->client_ssl == NULL)
    {
       status = pgagroal_read_socket_message(wi->client_fd, &msg);
@@ -372,7 +371,7 @@ session_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
             }
          }
 
-         // Forward the message to the server, using SSL if applicable. // TODO: section
+         // Forward the message to the server, using SSL if applicable.
          if (wi->server_ssl == NULL)
          {
             status = pgagroal_write_socket_message(wi->server_fd, msg);

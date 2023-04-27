@@ -55,7 +55,6 @@ struct worker_io
    int client_fd;        /**< The client descriptor */
    int server_fd;        /**< The server descriptor */
    int slot;             /**< The slot */
-   // memo
    SSL* client_ssl;      /**< The client SSL context */
    SSL* server_ssl;      /**< The server SSL context */
 };

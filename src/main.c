@@ -105,14 +105,14 @@ static volatile int keep_running = 1;              // a volatile integer flag th
 static char** argv_ptr;                            // a pointer to the command-line arguments passed to the main function.
 static struct ev_loop* main_loop = NULL;           // a pointer to the main event loop used by the libev library.
 static struct accept_io io_main[MAX_FDS];          // an array of accept_io structures, storing information related to the main file descriptors (sockets).
-static struct accept_io io_mgt;                    // an accept_io structure that stores information related to the management file descriptor (socket). // Research: difference from io_management
+static struct accept_io io_mgt;                    // an accept_io structure that stores information related to the management file descriptor (socket).
 static struct accept_io io_uds;                    // an accept_io structure that stores information related to the Unix domain socket file descriptor.
 static int* main_fds = NULL;                       // an array of integers that holds the main file descriptors (sockets) for incoming connections.
 static int main_fds_length = -1;                   // an integer that holds the length of the 'main_fds' array.
 static int unix_management_socket = -1;            // an integer that holds the file descriptor for the Unix management socket.
-static int unix_pgsql_socket = -1;                 // an integer that holds the file descriptor for the Unix PostgreSQL socket. // Research: tbd
+static int unix_pgsql_socket = -1;                 // an integer that holds the file descriptor for the Unix PostgreSQL socket.
 static struct accept_io io_metrics[MAX_FDS];       // an array of accept_io structures, storing information related to the metrics file descriptors (sockets).
-static int* metrics_fds = NULL;                    // an array of integers that holds the metrics file descriptors (sockets) for incoming connections. // Research: tbd
+static int* metrics_fds = NULL;                    // an array of integers that holds the metrics file descriptors (sockets) for incoming connections.
 static int metrics_fds_length = -1;                // an integer that holds the length of the 'metrics_fds' array.
 static struct accept_io io_management[MAX_FDS];    // an array of accept_io structures, storing information related to the management file descriptors (sockets).
 static int* management_fds = NULL;                 // an array of integers that holds the management file descriptors (sockets) for incoming connections.
@@ -295,6 +295,7 @@ int
 main(int argc, char** argv)
 {
    /* Declare variables */
+
    // Path variables for various configuration files.
    char* configuration_path = NULL;
    char* hba_path = NULL;
@@ -303,8 +304,7 @@ main(int argc, char** argv)
    char* frontend_users_path = NULL;
    char* admins_path = NULL;
    char* superuser_path = NULL;
-   // Daemon flag and process id variables. // Research: tbd
-   // When set to true, the process will detach itself from the terminal and run in the background, providing its services without user interaction.
+   // Daemon flag and process id variables.
    bool daemon = false;
    pid_t pid, sid;
 #ifdef HAVE_LINUX
@@ -312,28 +312,18 @@ main(int argc, char** argv)
    int sds;
 #endif
    // Socket-related flags.
-   // memo: A Unix Domain Socket, also known as IPC (Inter-Process Communication) socket or local socket, is a communication mechanism that enables processes running on the same host (machine) to exchange data. Unlike network sockets (e.g., TCP/IP sockets), which facilitate communication between processes across different hosts using a network protocol, Unix Domain Sockets use the file system for addressing and don't involve any network overhead.
-   //    Unix Domain Sockets provide a way for bidirectional communication between processes on the same host, and they can be more efficient than network sockets in this context since they bypass the network stack. They are typically represented as special files within the file system, with a specific path used as the socket's address.
    bool has_unix_socket = false;
-   // memo: The term "main sockets" refers to the primary sockets the application uses for accepting incoming connections. These sockets are typically network sockets (e.g., TCP/IP sockets) that listen for incoming connections from clients on a specific IP address and port number.
-   //    The application binds to the main sockets to serve incoming client requests. For example, a database proxy application might listen for incoming client connections on a particular IP address and port. When clients connect to these main sockets, the application can then manage, process, and forward the requests to the appropriate backend server.
    bool has_main_sockets = false;
-   // Shared memory-related variables.
-   void* tmp_shmem = NULL;
    // Event loop and signal handling variables.
-   // memo: The signal_watcher structures in the provided context are instances of the signal_info struct, which is used to store information about various signals the program needs to handle. These structures are typically used with an event-driven framework, such as libev, to watch for specific signals and execute a callback function when they are triggered.
    struct signal_info signal_watcher[6];
    struct ev_periodic idle_timeout;
    struct ev_periodic max_connection_age;
    struct ev_periodic validation;
    struct ev_periodic disconnect_client;
    // Resource limit variable.
-   // memo: rlimit is a structure defined in the sys/resource.h header file on Unix-like systems. It is used to represent the resource limits that can be applied to a process. Each resource limit consists of a soft limit and a hard limit. The soft limit is the value that the kernel enforces for the corresponding resource, while the hard limit represents an absolute maximum value that cannot be exceeded.
-   //    the flimit variable of type struct rlimit is used to store the resource limits related to file descriptors for the process. Specifically, it is used to change the maximum number of open file descriptors that the process is allowed to have.
-   //    In a connection pooling application like pgagroal, there can be a large number of open file descriptors due to client connections, backend connections, and other resources. By adjusting the rlimit for file descriptors, you can ensure that the process can handle the required number of connections without running into issues caused by reaching the default file descriptor limit.
-   //    The flimit variable is typically used in conjunction with the getrlimit() and setrlimit() system calls to read the current limits and modify them as needed before the main part of the application starts.
    struct rlimit flimit;
    // Shared memory-related variables.
+   void* tmp_shmem = NULL;
    size_t shmem_size;
    size_t pipeline_shmem_size = 0;
    size_t prometheus_shmem_size = 0;
@@ -342,16 +332,15 @@ main(int argc, char** argv)
    // Configuration structure and return value variable.
    struct configuration* config = NULL;
    int ret;
-   // Variable to hold getopt_long return value.
-   int c;
-   // Flag to determine if a configuration file is mandatory.
-   bool conf_file_mandatory;
-   // A generic message used for errors
-   char message[MISC_LENGTH];
+   // Other variables
+   int c;                     // variable to hold getopt_long return value.
+   bool conf_file_mandatory;  // flag to determine if a configuration file is mandatory.
+   char message[MISC_LENGTH]; // a generic message used for errors
 
    argv_ptr = argv;
 
    /* Main loop to process command line arguments */
+
    while (1)
    {
       // Define long options for command line arguments.
@@ -450,12 +439,14 @@ main(int argc, char** argv)
    memset(&known_fds, 0, sizeof(known_fds));
    memset(message, 0, MISC_LENGTH);
 
-   /* Check and store paths of various configuration files */
-   // The main configuration file is mandatory! Use default path if not provided.
+   /* Configuration files */
+
+   // the main configuration file is mandatory! Use default path if not provided.
    configuration_path = configuration_path != NULL ? configuration_path : PGAGROAL_DEFAULT_CONF_FILE;
+   // Read the main configuration from the provided path.
    if ((ret = pgagroal_read_configuration(shmem, configuration_path, true)) != PGAGROAL_CONFIGURATION_STATUS_OK)
    {
-      // The configuration has some problem, build up a descriptive message
+      // the configuration has some problem, build up a descriptive message
       if (ret == PGAGROAL_CONFIGURATION_STATUS_FILE_NOT_FOUND)
       {
          snprintf(message, MISC_LENGTH, "Configuration file not found");
@@ -484,7 +475,7 @@ main(int argc, char** argv)
    // Copy the configuration path into the config structure.
    memcpy(&config->configuration_path[0], configuration_path, MIN(strlen(configuration_path), MAX_PATH - 1));
 
-   // The HBA file is mandatory! Use default path if not provided.
+   // the HBA file is mandatory! Use default path if not provided.
    hba_path = hba_path != NULL ? hba_path : PGAGROAL_DEFAULT_HBA_FILE;
    memset(message, 0, MISC_LENGTH);
    ret = pgagroal_read_hba_configuration(shmem, hba_path);
@@ -509,7 +500,7 @@ main(int argc, char** argv)
    // Copy the HBA path into the config structure.
    memcpy(&config->hba_path[0], hba_path, MIN(strlen(hba_path), MAX_PATH - 1));
 
-   // Start reading the limit configuration file.
+   // Read the limit configuration file.
    conf_file_mandatory = true;
 read_limit_path:
    if (limit_path != NULL)
@@ -547,26 +538,22 @@ read_limit_path:
    }
    else
    {
-      // The user did not specify a file on the command line
-      // So try the default one and allow it to be missing
+      // the user did not specify a file on the command line
+      // so try the default one and allow it to be missing
       limit_path = PGAGROAL_DEFAULT_LIMIT_FILE;
       conf_file_mandatory = false;
       goto read_limit_path;
    }
 
-   // Start reading the users configuration file.
+   // Read the users configuration file.
    conf_file_mandatory = true;
 read_users_path:
    if (users_path != NULL)
    {
-      // Read the users configuration from the provided path.
       memset(message, 0, MISC_LENGTH);
       ret = pgagroal_read_users_configuration(shmem, users_path);
-
-      // Check the status of the configuration file and handle errors.
       if (ret == PGAGROAL_CONFIGURATION_STATUS_OK)
       {
-         // Copy the users path into the config structure.
          memcpy(&config->users_path[0], users_path, MIN(strlen(users_path), MAX_PATH - 1));
       }
       else if (ret == PGAGROAL_CONFIGURATION_STATUS_FILE_NOT_FOUND && conf_file_mandatory)
@@ -601,22 +588,19 @@ read_users_path:
    }
    else
    {
-      // The user did not specify a file on the command line
-      // So try the default one and allow it to be missing
+      // the user did not specify a file on the command line
+      // so try the default one and allow it to be missing
       users_path = PGAGROAL_DEFAULT_USERS_FILE;
       conf_file_mandatory = false;
       goto read_users_path;
    }
 
-   // Start reading the frontend users configuration file.
+   // Read the frontend users configuration file.
    conf_file_mandatory = true;
 read_frontend_users_path:
    if (frontend_users_path != NULL)
    {
-      // Read the frontend users configuration from the provided path.
       ret = pgagroal_read_frontend_users_configuration(shmem, frontend_users_path);
-
-      // Check the status of the configuration file and handle errors.
       if (ret == PGAGROAL_CONFIGURATION_STATUS_FILE_NOT_FOUND && conf_file_mandatory)
       {
          memset(message, 0, MISC_LENGTH);
@@ -652,23 +636,20 @@ read_frontend_users_path:
    }
    else
    {
-      // The user did not specify a file on the command line
-      // So try the default one and allow it to be missing
+      // the user did not specify a file on the command line
+      // so try the default one and allow it to be missing
       frontend_users_path = PGAGROAL_DEFAULT_FRONTEND_USERS_FILE;
       conf_file_mandatory = false;
       goto read_frontend_users_path;
    }
 
-   // Start reading the admins configuration file.
+   // Read the admins configuration file.
    conf_file_mandatory = true;
 read_admins_path:
    if (admins_path != NULL)
    {
-      // Read the admins configuration from the provided path.
       memset(message, 0, MISC_LENGTH);
       ret = pgagroal_read_admins_configuration(shmem, admins_path);
-
-      // Check the status of the configuration file and handle errors.
       if (ret == PGAGROAL_CONFIGURATION_STATUS_FILE_NOT_FOUND && conf_file_mandatory)
       {
 
@@ -696,29 +677,25 @@ read_admins_path:
       }
       else if (ret == PGAGROAL_CONFIGURATION_STATUS_OK)
       {
-         // Copy the admins path into the config structure.
          memcpy(&config->admins_path[0], admins_path, MIN(strlen(admins_path), MAX_PATH - 1));
       }
    }
    else
    {
-      // The user did not specify a file on the command line
-      // So try the default one and allow it to be missing
+      // the user did not specify a file on the command line
+      // so try the default one and allow it to be missing
       admins_path = PGAGROAL_DEFAULT_ADMINS_FILE;
       conf_file_mandatory = false;
       goto read_admins_path;
    }
 
-   // Start reading the superuser configuration file.
+   // Read the superuser configuration file.
    conf_file_mandatory = true;
 read_superuser_path:
    if (superuser_path != NULL)
    {
-      // Read the superuser configuration from the provided path.
       ret = pgagroal_read_superuser_configuration(shmem, superuser_path);
       memset(message, 0, MISC_LENGTH);
-
-      // Check the status of the configuration file and handle errors.
       if (ret == PGAGROAL_CONFIGURATION_STATUS_FILE_NOT_FOUND && conf_file_mandatory)
       {
          snprintf(message, MISC_LENGTH, "SUPERUSER configuration file not found");
@@ -744,14 +721,13 @@ read_superuser_path:
       }
       else if (ret == PGAGROAL_CONFIGURATION_STATUS_OK)
       {
-         // Copy the superuser configuration path into the config structure.
          memcpy(&config->superuser_path[0], superuser_path, MIN(strlen(superuser_path), MAX_PATH - 1));
       }
    }
    else
    {
-      // The user did not specify a file on the command line
-      // So try the default one and allow it to be missing
+      // the user did not specify a file on the command line
+      // so try the default one and allow it to be missing
       superuser_path = PGAGROAL_DEFAULT_SUPERUSER_FILE;
       conf_file_mandatory = false;
       goto read_superuser_path;
@@ -764,7 +740,7 @@ read_superuser_path:
    if (sds > 0)
    {
       int m = 0;
-      // Initialize main file descriptors count.
+
       main_fds_length = 0;
 
       // Count the number of main file descriptors (AF_INET and AF_INET6).
@@ -824,6 +800,7 @@ read_superuser_path:
    }
 
    /* Configuration validation */
+
    // Validate the main configuration
    if (pgagroal_validate_configuration(shmem, has_unix_socket, has_main_sockets))
    {
@@ -873,14 +850,14 @@ read_superuser_path:
       errx(1, "Invalid ADMINS configuration");
    }
 
+   /* Shared memory */
+
    // Resize the shared memory segment
    if (pgagroal_resize_shared_memory(shmem_size, shmem, &tmp_size, &tmp_shmem))
    {
 #ifdef HAVE_LINUX
-      // Notify the systemd about the error in creating shared memory
       sd_notifyf(0, "STATUS=Error in creating shared memory");
 #endif
-      // Terminate the program with a non-zero exit status and display an error message
       errx(1, "Error in creating shared memory");
    }
    // Destroy the old shared memory segment
@@ -945,7 +922,7 @@ read_superuser_path:
          errx(1, "Daemon mode can't be used with console logging");
       }
 
-      // Fork the process to create a child process (daemon) // Research: tbd
+      // Fork the process to create a child process (daemon)
       pid = fork();
 
       if (pid < 0)
@@ -980,22 +957,17 @@ read_superuser_path:
    // Set the process title to "main"
    pgagroal_set_proc_title(argc, argv, "main", NULL);
 
-   /* Bind Unix Domain Socket for file descriptor transfers */ // TODO: what file descriptors are being transferred
+   /* Bind Unix Domain Socket for file descriptor transfers */
    if (pgagroal_bind_unix_socket(config->unix_socket_dir, MAIN_UDS, &unix_management_socket))
    {
-      // Log a fatal error
       pgagroal_log_fatal("pgagroal: Could not bind to %s/%s", config->unix_socket_dir, MAIN_UDS);
 #ifdef HAVE_LINUX
-      // Notify the systemd
       sd_notifyf(0, "STATUS=Could not bind to %s/%s", config->unix_socket_dir, MAIN_UDS);
 #endif
-      // Jump to the error handling section
       goto error;
    }
 
-   // If there is no Unix socket, bind the PostgreSQL Unix Domain Socket
-   // memo: PostgreSQL can listen for client connections on both TCP/IP and Unix Domain Sockets. By default, PostgreSQL creates a Unix Domain Socket in the /tmp or /var/run/postgresql directory, depending on the system and PostgreSQL version. The socket's name follows the ".s.PGSQL.<port>" pattern, where "<port>" is the port number on which PostgreSQL listens for connections.
-   //    When a client (e.g., pgagroal) wants to connect to a PostgreSQL server using a Unix Domain Socket, it has to specify the socket's directory and name. The client then creates its own socket and connects it to the server's socket. Once connected, the client and server can communicate with each other by exchanging data through the sockets.
+   // If there is no Unix socket already, bind the PostgreSQL Unix Domain Socket
    if (!has_unix_socket)
    {
       char pgsql[MISC_LENGTH];
@@ -1013,13 +985,12 @@ read_superuser_path:
       }
    }
 
-   // Bind main socket if there are no main sockets already
    /* Bind main socket */
    if (!has_main_sockets)
    {
       if (pgagroal_bind(config->host, config->port, &main_fds, &main_fds_length))
       {
-         pgagroal_log_fatal("pgagroal: Could not bind to %s:%d", config->host, config->port); // memo: bind to main host:port
+         pgagroal_log_fatal("pgagroal: Could not bind to %s:%d", config->host, config->port);
 #ifdef HAVE_LINUX
          sd_notifyf(0, "STATUS=Could not bind to %s:%d", config->host, config->port);
 #endif
@@ -1037,7 +1008,8 @@ read_superuser_path:
       goto error;
    }
 
-   // Research: tbd
+   /* Event loop */
+
    // Initialize the libev event loop
    /* libev */
    main_loop = ev_default_loop(pgagroal_libev(config->libev));
@@ -1179,7 +1151,6 @@ read_superuser_path:
       start_metrics();
    }
 
-   // Research: tbd
    // Initialize and start management service, if configured
    if (config->management > 0)
    {
@@ -1205,6 +1176,8 @@ read_superuser_path:
       start_management();
    }
 
+   /* Log the starting information */
+
    // Log the version and starting information of pgagroal
    pgagroal_log_info("pgagroal: %s started on %s:%d",
                      PGAGROAL_VERSION,
@@ -1225,7 +1198,6 @@ read_superuser_path:
    {
       pgagroal_log_debug("Remote management: %d", *(management_fds + i));
    }
-   // Research: tbd
    // Log libev engines information
    pgagroal_libev_engines();
    pgagroal_log_debug("libev engine: %s", pgagroal_libev_engine(ev_backend(main_loop)));
@@ -1252,6 +1224,8 @@ read_superuser_path:
       pgagroal_log_warn("No users allowed");
    }
 
+   /* Prefill */
+
    // Check if prefilling is possible and spawn a child process to do the prefill
    if (pgagroal_can_prefill())
    {
@@ -1270,11 +1244,15 @@ read_superuser_path:
               "MAINPID=%lu", (unsigned long)getpid());
 #endif
 
-   // Run the main event loop while the program is running
+   /* Main event loop */
+
+   // Run the main event loop while keep_running
    while (keep_running)
    {
       ev_loop(main_loop, 0);
    }
+
+   /* Stopping */
 
    pgagroal_log_info("pgagroal: shutdown");
 #ifdef HAVE_LINUX
@@ -2220,7 +2198,7 @@ create_pidfile_or_exit(void)
       fd = open(config->pidfile, O_WRONLY | O_CREAT | O_EXCL, 0640);
       if (errno == EEXIST)
       {
-         errx(1, "PID file <%s> exists, is there another instance running ?", config->pidfile); // memo: create pid file error
+         errx(1, "PID file <%s> exists, is there another instance running ?", config->pidfile);
       }
       else if (errno == EACCES)
       {

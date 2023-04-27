@@ -95,7 +95,6 @@ start:
    do_init = false;
    has_lock = false;
 
-   // Research: what is best rule
    // Check if the best rule is valid
    if (best_rule >= 0)
    {
@@ -144,7 +143,6 @@ start:
    }
 
    // If a connection slot is not found and not in transaction_mode, try creating a new connection
-   // TODO: not creating new connections in transaction_mode here
    if (*slot == -1 && !transaction_mode)
    {
       /* Ok, try and create a new connection */
@@ -242,7 +240,7 @@ start:
          memcpy(&config->connections[*slot].database, database, MIN(strlen(database), MAX_DATABASE_LENGTH - 1));
 
          config->connections[*slot].has_security = SECURITY_INVALID;
-         config->connections[*slot].fd = fd; // memo: connnection fd is initialized here
+         config->connections[*slot].fd = fd;
 
          // Set the connection state to in use
          atomic_store(&config->states[*slot], STATE_IN_USE);
@@ -524,7 +522,6 @@ pgagroal_kill_connection(int slot, SSL* ssl)
    {
       pgagroal_management_kill_connection(slot, fd);
 
-      // TODO: understand this
       if (ssl != NULL)
       {
          ctx = SSL_get_SSL_CTX(ssl);
