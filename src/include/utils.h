@@ -53,7 +53,7 @@ struct signal_info
  * @return The identifier
  */
 int32_t
-pgagroal_get_request(struct message* msg);
+pgagroal_get_request(struct message* msg); // memo
 
 /**
  * Extract the user name and database from a message
@@ -64,7 +64,7 @@ pgagroal_get_request(struct message* msg);
  * @return 0 upon success, otherwise 1
  */
 int
-pgagroal_extract_username_database(struct message* msg, char** username, char** database, char** appname);
+pgagroal_extract_username_database(struct message* msg, char** username, char** database, char** appname); // memo
 
 /**
  * Extract a message from a message

@@ -191,6 +191,7 @@ pgagroal_worker(int client_fd, char* address, char** argv)
 
       // Start the client I/O watcher
       ev_io_start(loop, (struct ev_io*)&client_io);
+
       // Start the server I/O watcher (if not using a transaction pipeline)
       if (config->pipeline != PIPELINE_TRANSACTION)
       {

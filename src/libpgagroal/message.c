@@ -45,8 +45,8 @@
 static int read_message(int socket, bool block, int timeout, struct message** msg);
 static int write_message(int socket, struct message* msg);
 
-static int ssl_read_message(SSL* ssl, int timeout, struct message** msg);
-static int ssl_write_message(SSL* ssl, struct message* msg);
+static int ssl_read_message(SSL* ssl, int timeout, struct message** msg); // memo
+static int ssl_write_message(SSL* ssl, struct message* msg); // memo
 
 int
 pgagroal_read_block_message(SSL* ssl, int socket, struct message** msg)
@@ -232,6 +232,7 @@ pgagroal_write_notice(SSL* ssl, int socket)
    return ssl_write_message(ssl, &msg);
 }
 
+// TODO: understand this function
 int
 pgagroal_write_tls(SSL* ssl, int socket)
 {
@@ -1365,6 +1366,8 @@ write_message(int socket, struct message* msg)
    return MESSAGE_STATUS_ERROR;
 }
 
+// TODO: where is it called
+// Securely reading a message over SSL/TLS.
 static int
 ssl_read_message(SSL* ssl, int timeout, struct message** msg)
 {
@@ -1373,19 +1376,24 @@ ssl_read_message(SSL* ssl, int timeout, struct message** msg)
    time_t start_time;
    struct message* m = NULL;
 
+   // If a timeout is specified, record the start time.
    if (unlikely(timeout > 0))
    {
       start_time = time(NULL);
    }
 
+   // Continue reading the message until it is completely received or an error occurs.
    do
    {
       keep_read = false;
 
+      // Allocate memory for the message.
       m = pgagroal_memory_message();
 
+      // Use SSL_read to receive the message securely over SSL/TLS.
       numbytes = SSL_read(ssl, m->data, m->max_length);
 
+      // If the message has been received, set the message type, length, and return MESSAGE_STATUS_OK.
       if (likely(numbytes > 0))
       {
          m->kind = (signed char)(*((char*)m->data));
@@ -1398,7 +1406,9 @@ ssl_read_message(SSL* ssl, int timeout, struct message** msg)
       {
          int err;
 
+         // Get the SSL error code for the read operation.
          err = SSL_get_error(ssl, numbytes);
+         // Handle specific SSL/TLS errors.
          switch (err)
          {
             case SSL_ERROR_NONE:
@@ -1407,11 +1417,13 @@ ssl_read_message(SSL* ssl, int timeout, struct message** msg)
                if (timeout > 0)
                {
 
+                  // If the timeout has been reached, return MESSAGE_STATUS_ZERO.
                   if (difftime(time(NULL), start_time) >= timeout)
                   {
                      return MESSAGE_STATUS_ZERO;
                   }
 
+                  // Sleep for 100ms to avoid busy waiting.
                   /* Sleep for 100ms */
                   SLEEP(100000000L)
 
@@ -1432,6 +1444,7 @@ ssl_read_message(SSL* ssl, int timeout, struct message** msg)
 #endif
                keep_read = true;
                break;
+            // For SSL_ERROR_SYSCALL and SSL_ERROR_SSL, log the error details.
             case SSL_ERROR_SYSCALL:
                pgagroal_log_error("SSL_ERROR_SYSCALL: %s (%d)", strerror(errno), SSL_get_fd(ssl));
                errno = 0;
@@ -1440,14 +1453,18 @@ ssl_read_message(SSL* ssl, int timeout, struct message** msg)
                pgagroal_log_error("SSL_ERROR_SSL: %s (%d)", strerror(errno), SSL_get_fd(ssl));
                break;
          }
+         // Clear the OpenSSL error queue.
          ERR_clear_error();
       }
    }
    while (keep_read);
 
+   // If the function reaches this point, an error occurred, and we return MESSAGE_STATUS_ERROR.
    return MESSAGE_STATUS_ERROR;
 }
 
+// TODO: where is it called
+// Securely sending a message over SSL/TLS.
 static int
 ssl_write_message(SSL* ssl, struct message* msg)
 {
@@ -1461,36 +1478,44 @@ ssl_write_message(SSL* ssl, struct message* msg)
    assert(msg != NULL);
 #endif
 
+   // Initialize the variables.
    numbytes = 0;
    offset = 0;
    totalbytes = 0;
    remaining = msg->length;
 
+   // Continue writing the message until it is completely sent or an error occurs.
    do
    {
       keep_write = false;
 
+      // Use SSL_write to send the message securely over SSL/TLS.
       numbytes = SSL_write(ssl, msg->data + offset, remaining);
 
+      // If the entire message has been sent, return MESSAGE_STATUS_OK.
       if (likely(numbytes == msg->length))
       {
          return MESSAGE_STATUS_OK;
       }
+      // If part of the message has been sent, update the counters and continue writing.
       else if (numbytes > 0)
       {
          offset += numbytes;
          totalbytes += numbytes;
          remaining -= numbytes;
 
+         // If the total bytes written equals the message length, return MESSAGE_STATUS_OK.
          if (totalbytes == msg->length)
          {
             return MESSAGE_STATUS_OK;
          }
 
+         // Log a debug message about the partial write.
          pgagroal_log_debug("SSL/Write %d - %zd/%zd vs %zd", SSL_get_fd(ssl), numbytes, totalbytes, msg->length);
          keep_write = true;
          errno = 0;
       }
+      // If an error occurs, handle the error and decide whether to continue writing or not.
       else
       {
          int err = SSL_get_error(ssl, numbytes);
@@ -1499,6 +1524,7 @@ ssl_write_message(SSL* ssl, struct message* msg)
          {
             case SSL_ERROR_NONE:
                break;
+            // For these errors, set errno to 0 and continue writing.
             case SSL_ERROR_ZERO_RETURN:
             case SSL_ERROR_WANT_READ:
             case SSL_ERROR_WANT_WRITE:
@@ -1517,6 +1543,7 @@ ssl_write_message(SSL* ssl, struct message* msg)
                errno = 0;
                keep_write = true;
                break;
+            // For SSL_ERROR_SYSCALL and SSL_ERROR_SSL, log the error details and set errno to 0.
             case SSL_ERROR_SYSCALL:
                pgagroal_log_error("SSL_ERROR_SYSCALL: FD %d", SSL_get_fd(ssl));
                pgagroal_log_error("%s", ERR_error_string(err, NULL));
@@ -1532,8 +1559,10 @@ ssl_write_message(SSL* ssl, struct message* msg)
                errno = 0;
                break;
          }
+         // Clear the OpenSSL error queue.
          ERR_clear_error();
 
+         // If keep_write is false, an unrecoverable error occurred, and we return MESSAGE_STATUS_ERROR.
          if (!keep_write)
          {
             return MESSAGE_STATUS_ERROR;
@@ -1542,5 +1571,6 @@ ssl_write_message(SSL* ssl, struct message* msg)
    }
    while (keep_write);
 
+   // If the function reaches this point, an error occurred, and we return MESSAGE_STATUS_ERROR.
    return MESSAGE_STATUS_ERROR;
 }

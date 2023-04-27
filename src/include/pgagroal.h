@@ -443,6 +443,7 @@ struct configuration
 
    bool authquery; /**< Is authentication query enabled */
 
+   // memo
    bool tls;                        /**< Is TLS enabled */
    char tls_cert_file[MISC_LENGTH]; /**< TLS certificate path */
    char tls_key_file[MISC_LENGTH];  /**< TLS key path */
