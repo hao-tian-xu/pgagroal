@@ -524,6 +524,7 @@ pgagroal_kill_connection(int slot, SSL* ssl)
    {
       pgagroal_management_kill_connection(slot, fd);
 
+      // TODO: understand this
       if (ssl != NULL)
       {
          ctx = SSL_get_SSL_CTX(ssl);

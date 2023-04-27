@@ -49,6 +49,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
+// TODO: understand the file
+
 static int  session_initialize(void*, void**, size_t*);
 static void session_start(struct ev_loop* loop, struct worker_io*);
 static void session_client(struct ev_loop* loop, struct ev_io* watcher, int revents);
@@ -92,6 +94,8 @@ session_pipeline(void)
    return pipeline;
 }
 
+// Initializes the session pipeline by creating shared memory for client sessions and
+// initializing each client session in the shared memory.
 static int
 session_initialize(void* shmem, void** pipeline_shmem, size_t* pipeline_shmem_size)
 {
@@ -102,26 +106,36 @@ session_initialize(void* shmem, void** pipeline_shmem, size_t* pipeline_shmem_si
 
    config = (struct configuration*)shmem;
 
+   // Initialize the pipeline shared memory pointers.
    *pipeline_shmem = NULL;
    *pipeline_shmem_size = 0;
 
+   // If the configuration specifies a disconnect_client value greater than 0,
+   // create shared memory for the session pipeline.
    if (config->disconnect_client > 0)
    {
+      // Calculate the size of the shared memory for the session pipeline.
       session_shmem_size = config->max_connections * sizeof(struct client_session);
+      // Create shared memory for the session pipeline with the calculated size.
       if (pgagroal_create_shared_memory(session_shmem_size, config->hugepage, &session_shmem))
       {
          return 1;
       }
+      // Zero out the shared memory.
       memset(session_shmem, 0, session_shmem_size);
 
+      // Initialize each client session in the shared memory.
       for (int i = 0; i < config->max_connections; i++)
       {
+         // Get the address of the client session in the shared memory.
          client = session_shmem + (i * sizeof(struct client_session));
 
+         // Initialize the client session state and timestamp.
          atomic_init(&client->state, CLIENT_INIT);
          client->timestamp = time(NULL);
       }
 
+      // Set the pipeline shared memory pointers to the newly created shared memory.
       *pipeline_shmem = session_shmem;
       *pipeline_shmem_size = session_shmem_size;
    }
@@ -129,6 +143,7 @@ session_initialize(void* shmem, void** pipeline_shmem, size_t* pipeline_shmem_si
    return 0;
 }
 
+// Start a new session for the client.
 static void
 session_start(struct ev_loop* loop, struct worker_io* w)
 {
@@ -137,22 +152,29 @@ session_start(struct ev_loop* loop, struct worker_io* w)
 
    config = (struct configuration*)shmem;
 
+   // Initialize transaction and message indices.
    in_tx = false;
    next_client_message = 0;
    next_server_message = 0;
 
+   // Iterate through all connections and disconnect any inactive ones.
    for (int i = 0; i < config->max_connections; i++)
    {
+      // Check if the current connection is not the worker's own slot, is not new, and has an open file descriptor.
       if (i != w->slot && !config->connections[i].new && config->connections[i].fd > 0)
       {
+         // Disconnect the inactive connection.
          pgagroal_disconnect(config->connections[i].fd);
       }
    }
 
+   // If the pipeline shared memory is available, update the client session state and timestamp.
    if (pipeline_shmem != NULL)
    {
+      // Get the address of the client session in the shared memory.
       client = pipeline_shmem + (w->slot * sizeof(struct client_session));
 
+      // Set the client session state to idle and update the timestamp.
       atomic_store(&client->state, CLIENT_IDLE);
       client->timestamp = time(NULL);
    }
@@ -280,6 +302,7 @@ session_periodic(void)
    exit(0);
 }
 
+// Handle client events during a session.
 static void
 session_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
 {
@@ -288,11 +311,14 @@ session_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
    struct message* msg = NULL;
    struct configuration* config = NULL;
 
+   // Retrieve the worker_io object and configuration from shared memory.
    wi = (struct worker_io*)watcher;
    config = (struct configuration*)shmem;
 
+   // Update the activity status for the current client.
    client_active(wi->slot);
 
+   // Read the message from the client, using SSL if applicable. // TODO: section
    if (wi->client_ssl == NULL)
    {
       status = pgagroal_read_socket_message(wi->client_fd, &msg);
@@ -301,14 +327,17 @@ session_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
    {
       status = pgagroal_read_ssl_message(wi->client_ssl, &msg);
    }
+   // Process the message if it was read successfully.
    if (likely(status == MESSAGE_STATUS_OK))
    {
       pgagroal_prometheus_network_sent_add(msg->length);
 
+      // If the message is not a termination ('X') message, process it.
       if (likely(msg->kind != 'X'))
       {
          int offset = 0;
 
+         // Process each message in the buffer.
          while (offset < msg->length)
          {
             if (next_client_message == 0)
@@ -316,6 +345,7 @@ session_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
                char kind = pgagroal_read_byte(msg->data + offset);
                int length = pgagroal_read_int32(msg->data + offset + 1);
 
+               // Update query count metrics for simple query (Q) and prepared statement (E) messages.
                /* The Q and E message tell us the execute of the simple query and the prepared statement */
                if (kind == 'Q' || kind == 'E')
                {
@@ -342,6 +372,7 @@ session_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
             }
          }
 
+         // Forward the message to the server, using SSL if applicable. // TODO: section
          if (wi->server_ssl == NULL)
          {
             status = pgagroal_write_socket_message(wi->server_fd, msg);
@@ -350,6 +381,7 @@ session_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
          {
             status = pgagroal_write_ssl_message(wi->server_ssl, msg);
          }
+         // Handle any errors in forwarding the message.
          if (unlikely(status == MESSAGE_STATUS_ERROR))
          {
             if (config->failover)
@@ -366,12 +398,14 @@ session_client(struct ev_loop* loop, struct ev_io* watcher, int revents)
             }
          }
       }
+      // If the message is a termination ('X') message, set the appropriate flags.
       else if (msg->kind == 'X')
       {
          saw_x = true;
          running = 0;
       }
    }
+   // If the message read status was zero, go to client_done.
    else if (status == MESSAGE_STATUS_ZERO)
    {
       goto client_done;
@@ -445,6 +479,7 @@ failover:
    return;
 }
 
+// Handle server events during a session.
 static void
 session_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
 {
@@ -456,8 +491,10 @@ session_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
 
    wi = (struct worker_io*)watcher;
 
+   // Update the activity status for the current client.
    client_active(wi->slot);
 
+   // Read the message from the server, using SSL if applicable.
    if (wi->server_ssl == NULL)
    {
       status = pgagroal_read_socket_message(wi->server_fd, &msg);
@@ -466,12 +503,14 @@ session_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
    {
       status = pgagroal_read_ssl_message(wi->server_ssl, &msg);
    }
+   // Process the message if it was read successfully.
    if (likely(status == MESSAGE_STATUS_OK))
    {
       pgagroal_prometheus_network_received_add(msg->length);
 
       int offset = 0;
 
+      // Process each message in the buffer.
       while (offset < msg->length)
       {
          if (next_server_message == 0)
@@ -479,6 +518,7 @@ session_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
             char kind = pgagroal_read_byte(msg->data + offset);
             int length = pgagroal_read_int32(msg->data + offset + 1);
 
+            // Update transaction count metric for 'Z' (transaction state) messages.
             /* The Z message tell us the transaction state */
             if (kind == 'Z')
             {
@@ -510,6 +550,7 @@ session_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
             next_server_message -= offset;
          }
       }
+      // Forward the message to the client, using SSL if applicable.
       if (wi->client_ssl == NULL)
       {
          status = pgagroal_write_socket_message(wi->client_fd, msg);
@@ -518,11 +559,13 @@ session_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
       {
          status = pgagroal_write_ssl_message(wi->client_ssl, msg);
       }
+      // Handle any errors in forwarding the message.
       if (unlikely(status != MESSAGE_STATUS_OK))
       {
          goto client_error;
       }
 
+      // Check for fatal errors in 'E' (error) messages.
       if (unlikely(msg->kind == 'E'))
       {
          fatal = false;
@@ -532,6 +575,7 @@ session_server(struct ev_loop* loop, struct ev_io* watcher, int revents)
             fatal = true;
          }
 
+         // If a fatal error is detected, set the exit code and stop the session.
          if (fatal)
          {
             exit_code = WORKER_SERVER_FATAL;

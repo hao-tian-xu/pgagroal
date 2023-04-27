@@ -38,7 +38,7 @@ extern "C" {
 #include <stdbool.h>
 #include <stdlib.h>
 
-#include <openssl/ssl.h>
+#include <openssl/ssl.h> // memo
 
 #define MESSAGE_STATUS_ZERO  0
 #define MESSAGE_STATUS_OK    1
@@ -220,7 +220,7 @@ pgagroal_write_discard_all(SSL* ssl, int socket);
  * @return 0 upon success, otherwise 1
  */
 int
-pgagroal_write_tls(SSL* ssl, int socket);
+pgagroal_write_tls(SSL* ssl, int socket); // memo
 
 /**
  * Write a terminate message
@@ -384,7 +384,7 @@ pgagroal_connection_isvalid(int socket);
  * @param msg The message
  */
 void
-pgagroal_log_message(struct message* msg);
+pgagroal_log_message(struct message* msg); // memo
 
 /**
  * Read a message using a socket
@@ -393,7 +393,7 @@ pgagroal_log_message(struct message* msg);
  * @return One of MESSAGE_STATUS_ZERO, MESSAGE_STATUS_OK or MESSAGE_STATUS_ERROR
  */
 int
-pgagroal_read_socket_message(int socket, struct message** msg);
+pgagroal_read_socket_message(int socket, struct message** msg); // memo
 
 /**
  * Write a message using a socket
@@ -402,7 +402,7 @@ pgagroal_read_socket_message(int socket, struct message** msg);
  * @return One of MESSAGE_STATUS_ZERO, MESSAGE_STATUS_OK or MESSAGE_STATUS_ERROR
  */
 int
-pgagroal_write_socket_message(int socket, struct message* msg);
+pgagroal_write_socket_message(int socket, struct message* msg); // memo
 
 /**
  * Read a message using SSL
@@ -411,7 +411,7 @@ pgagroal_write_socket_message(int socket, struct message* msg);
  * @return One of MESSAGE_STATUS_ZERO, MESSAGE_STATUS_OK or MESSAGE_STATUS_ERROR
  */
 int
-pgagroal_read_ssl_message(SSL* ssl, struct message** msg);
+pgagroal_read_ssl_message(SSL* ssl, struct message** msg); // memo
 
 /**
  * Write a message using SSL
@@ -420,7 +420,7 @@ pgagroal_read_ssl_message(SSL* ssl, struct message** msg);
  * @return One of MESSAGE_STATUS_ZERO, MESSAGE_STATUS_OK or MESSAGE_STATUS_ERROR
  */
 int
-pgagroal_write_ssl_message(SSL* ssl, struct message* msg);
+pgagroal_write_ssl_message(SSL* ssl, struct message* msg); // memo
 
 #ifdef __cplusplus
 }
