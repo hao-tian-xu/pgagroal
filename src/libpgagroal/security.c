@@ -269,6 +269,7 @@ pgagroal_authenticate(int client_fd, char* address, int* slot, SSL** client_ssl,
    }
 
    // MAIN: TLS 2 (client - pgagroal)
+   //    the user and password provided by the user is not authenticated here
    // Check if the request is an SSL request (80877103).
    // memo: An SSL request (with the code 80877103) is a request sent by the client to the server to initiate a secure connection using SSL/TLS (Secure Socket Layer/Transport Layer Security) encryption.
    /* SSL request: 80877103 */
@@ -453,7 +454,8 @@ pgagroal_authenticate(int client_fd, char* address, int* slot, SSL** client_ssl,
          pgagroal_log_debug("authenticate: getting pooled connection");
          pgagroal_free_message(msg);
 
-         // MAIN: TLS 3
+         // MAIN: TLS 2 (pgagroal - postgres)
+         //    also authenticate user and password provided by the client
          // Try to use an existing pooled connection.
          ret = use_pooled_connection(c_ssl, client_fd, *slot, username, database, hba_method, server_ssl); // TODO
          if (ret == AUTH_BAD_PASSWORD)
@@ -471,7 +473,8 @@ pgagroal_authenticate(int client_fd, char* address, int* slot, SSL** client_ssl,
       {
          pgagroal_log_debug("authenticate: creating pooled connection");
 
-         // MAIN: TLS 3
+         // MAIN: TLS 2 (pgagroal - postgres)
+         //    also authenticate user and password provided by the client
          // Create a new connection for the pool.
          ret = use_unpooled_connection(request_msg, c_ssl, client_fd, *slot, username, hba_method, server_ssl);
          if (ret == AUTH_BAD_PASSWORD)
@@ -1332,25 +1335,29 @@ compare_auth_response(struct message* orig, struct message* response, int auth_t
 static int
 use_pooled_connection(SSL* c_ssl, int client_fd, int slot, char* username, char* database, int hba_method, SSL** server_ssl)
 {
-   int status = MESSAGE_STATUS_ERROR;
-   struct configuration* config = NULL;
-   struct message* auth_msg = NULL;
-   struct message* msg = NULL;
-   char* password = NULL;
+   // Declare and initialize variables
+   int status = MESSAGE_STATUS_ERROR;     // Integer to store the status of various operations
+   struct configuration* config = NULL;   // Pointer to the shared memory configuration
+   struct message* auth_msg = NULL;       // Pointer to a message structure for authentication message
+   struct message* msg = NULL;            // Pointer to a message structure for received messages
+   char* password = NULL;                 // Pointer to the password string for the given user
 
    config = (struct configuration*)shmem;
 
+   // Get the frontend password, if not available, get the general password
    password = get_frontend_password(username);
    if (password == NULL)
    {
       password = get_password(username);
    }
 
+   // Set hba_method according to the connection security level if SECURITY_ALL
    if (hba_method == SECURITY_ALL)
    {
       hba_method = config->connections[slot].has_security;
    }
 
+   // If authquery is enabled, use it for authentication
    if (config->authquery)
    {
       status = auth_query(c_ssl, client_fd, slot, username, database, hba_method);
@@ -1363,13 +1370,16 @@ use_pooled_connection(SSL* c_ssl, int client_fd, int slot, char* username, char*
          goto error;
       }
    }
+   // If password is not available, handle SECURITY_TRUST, SECURITY_PASSWORD, and SECURITY_MD5 cases
    else if (password == NULL)
    {
+      // Create an authentication message based on the connection's security_messages
       /* We can only deal with SECURITY_TRUST, SECURITY_PASSWORD and SECURITY_MD5 */
       pgagroal_create_message(&config->connections[slot].security_messages[0],
                               config->connections[slot].security_lengths[0],
                               &auth_msg);
 
+      // Write the authentication message to the client
       status = pgagroal_write_message(c_ssl, client_fd, auth_msg);
       if (status != MESSAGE_STATUS_OK)
       {
@@ -1378,21 +1388,26 @@ use_pooled_connection(SSL* c_ssl, int client_fd, int slot, char* username, char*
       pgagroal_free_copy_message(auth_msg);
       auth_msg = NULL;
 
+      // If the connection requires a password or MD5 authentication
       /* Password or MD5 */
       if (config->connections[slot].has_security != SECURITY_TRUST)
       {
+         // Read the client's response
          status = pgagroal_read_timeout_message(c_ssl, client_fd, config->authentication_timeout, &msg);
          if (status != MESSAGE_STATUS_OK)
          {
             goto error;
          }
 
+         // Create an authentication message based on the connection's security_messages
          pgagroal_create_message(&config->connections[slot].security_messages[1],
                                  config->connections[slot].security_lengths[1],
                                  &auth_msg);
 
+         // Compare the received message with the expected auth response
          if (compare_auth_response(auth_msg, msg, config->connections[slot].has_security))
          {
+            // If authentication fails, send a bad password message to the client
             pgagroal_write_bad_password(c_ssl, client_fd, username);
             pgagroal_write_empty(c_ssl, client_fd);
 
@@ -1402,10 +1417,12 @@ use_pooled_connection(SSL* c_ssl, int client_fd, int slot, char* username, char*
          pgagroal_free_copy_message(auth_msg);
          auth_msg = NULL;
 
+         // Create the final authentication message based on the connection's security_messages
          pgagroal_create_message(&config->connections[slot].security_messages[2],
                                  config->connections[slot].security_lengths[2],
                                  &auth_msg);
 
+         // Write the final authentication message to the client
          status = pgagroal_write_message(c_ssl, client_fd, auth_msg);
          if (status != MESSAGE_STATUS_OK)
          {
@@ -1417,13 +1434,16 @@ use_pooled_connection(SSL* c_ssl, int client_fd, int slot, char* username, char*
    }
    else
    {
+      // We have a password, handle different security methods
       /* We have a password */
 
+      // SECURITY_TRUST: No password required, just trust the client
       if (hba_method == SECURITY_TRUST)
       {
          /* R/0 */
          client_trust(c_ssl, client_fd, username, password, slot);
       }
+      // SECURITY_PASSWORD: Plain-text password authentication
       else if (hba_method == SECURITY_PASSWORD)
       {
          /* R/3 */
@@ -1437,6 +1457,7 @@ use_pooled_connection(SSL* c_ssl, int client_fd, int slot, char* username, char*
             goto error;
          }
       }
+      // SECURITY_MD5: MD5 password authentication
       else if (hba_method == SECURITY_MD5)
       {
          /* R/5 */
@@ -1450,6 +1471,7 @@ use_pooled_connection(SSL* c_ssl, int client_fd, int slot, char* username, char*
             goto error;
          }
       }
+      // SECURITY_SCRAM256: SCRAM-SHA-256 password authentication
       else if (hba_method == SECURITY_SCRAM256)
       {
          /* R/10 */
@@ -1463,26 +1485,31 @@ use_pooled_connection(SSL* c_ssl, int client_fd, int slot, char* username, char*
             goto error;
          }
       }
+      // Unsupported security method
       else
       {
          goto error;
       }
 
+      // Check if the client received the 'ok' message
       if (client_ok(c_ssl, client_fd, slot))
       {
          goto error;
       }
    }
 
+   // Successful authentication
    return AUTH_SUCCESS;
 
 bad_password:
+   // Handle bad password case
 
    pgagroal_log_trace("use_pooled_connection: bad password for slot %d", slot);
 
    return AUTH_BAD_PASSWORD;
 
 error:
+   // Handle error case
 
    pgagroal_log_trace("use_pooled_connection: failed for slot %d", slot);
 
@@ -1731,10 +1758,12 @@ client_password(SSL* c_ssl, int client_fd, char* username, char* password, int s
    struct configuration* config;
    struct message* msg = NULL;
 
+   // Log debug message with client file descriptor and slot number
    pgagroal_log_debug("client_password %d %d", client_fd, slot);
 
    config = (struct configuration*)shmem;
 
+   // Send an authentication request for the password to the client
    status = pgagroal_write_auth_password(c_ssl, client_fd);
    if (status != MESSAGE_STATUS_OK)
    {
@@ -1743,9 +1772,12 @@ client_password(SSL* c_ssl, int client_fd, char* username, char* password, int s
 
    start_time = time(NULL);
 
+   // Save the current non-blocking mode and set the socket to non-blocking
    non_blocking = pgagroal_socket_is_nonblocking(client_fd);
    pgagroal_socket_nonblocking(client_fd, true);
 
+   // Read the client's response, retrying if the socket is still valid and
+   // the authentication timeout has not been reached
    /* psql may just close the connection without word, so loop */
 retry:
    status = pgagroal_read_timeout_message(c_ssl, client_fd, 1, &msg);
@@ -1756,6 +1788,7 @@ retry:
          if (pgagroal_socket_isvalid(client_fd))
          /* Sleep for 100ms */
          {
+            // Sleep for 100ms and then retry
             SLEEP_AND_GOTO(100000000L, retry)
          }
       }
@@ -1766,18 +1799,22 @@ retry:
       goto error;
    }
 
+   // Restore the original non-blocking mode of the socket
    if (!non_blocking)
    {
       pgagroal_socket_nonblocking(client_fd, false);
    }
 
+   // Compare the received password with the expected one
    if (strcmp(pgagroal_read_string(msg->data + 5), password))
    {
+      // Send a bad password error message to the client
       pgagroal_write_bad_password(c_ssl, client_fd, username);
 
       goto bad_password;
    }
 
+   // Free the received message and return success
    pgagroal_free_message(msg);
 
    return AUTH_SUCCESS;
@@ -5822,28 +5859,33 @@ establish_client_tls_connection(int server, int fd, SSL** ssl) // TODO: client? 
 
    config = (struct configuration*)shmem;
 
+   // Check if the server has TLS enabled
    use_ssl = config->servers[server].tls;
 
    if (use_ssl)
    {
+      // Create an SSL request message
       status = pgagroal_create_ssl_message(&ssl_msg);
       if (status != MESSAGE_STATUS_OK)
       {
          goto error;
       }
 
+      // Send the SSL request message to the server
       status = pgagroal_write_message(NULL, fd, ssl_msg);
       if (status != MESSAGE_STATUS_OK)
       {
          goto error;
       }
 
+      // Read the server's response to the SSL request
       status = pgagroal_read_block_message(NULL, fd, &msg);
       if (status != MESSAGE_STATUS_OK)
       {
          goto error;
       }
 
+      // If the server accepts the SSL request ('S' message), create a TLS connection
       if (msg->kind == 'S')
       {
          // MAIN: TLS 5
@@ -5851,6 +5893,7 @@ establish_client_tls_connection(int server, int fd, SSL** ssl) // TODO: client? 
       }
    }
 
+   // Free the SSL request message and the server's response message
    pgagroal_free_copy_message(ssl_msg);
    pgagroal_free_message(msg);
 
@@ -5864,6 +5907,7 @@ error:
    return AUTH_ERROR;
 }
 
+// MAIN: TLS 5 (pgagroal - postgres) main function to create the connection
 static int
 create_client_tls_connection(int fd, SSL** ssl)
 {
@@ -5871,6 +5915,7 @@ create_client_tls_connection(int fd, SSL** ssl)
    SSL* s = NULL;
    int status = -1;
 
+   // Create an SSL context for the client (pgagroal) against the server
    /* We are acting as a client against the server */
    if (create_ssl_ctx(true, &ctx))
    {
@@ -5878,6 +5923,7 @@ create_client_tls_connection(int fd, SSL** ssl)
       goto error;
    }
 
+   // Create an SSL structure for the client with the given context
    /* Create SSL structure */
    if (create_ssl_client(ctx, NULL, NULL, NULL, fd, &s))
    {
@@ -5885,15 +5931,17 @@ create_client_tls_connection(int fd, SSL** ssl)
       goto error;
    }
 
+   // Attempt to establish an SSL connection
    do
    {
       status = SSL_connect(s);
 
-      if (status != 1)
+      if (status != 1) // 1 means the connection was successful
       {
          int err = SSL_get_error(s, status);
          switch (err)
          {
+            // Cases where the SSL connection is still in progress
             case SSL_ERROR_ZERO_RETURN:
             case SSL_ERROR_WANT_READ:
             case SSL_ERROR_WANT_WRITE:
@@ -5910,6 +5958,7 @@ create_client_tls_connection(int fd, SSL** ssl)
 #endif
 #endif
                break;
+            // Cases where an SSL error occurred
             case SSL_ERROR_SYSCALL:
                pgagroal_log_error("SSL_ERROR_SYSCALL: FD %d", fd);
                pgagroal_log_error("%s", ERR_error_string(err, NULL));
@@ -5927,17 +5976,19 @@ create_client_tls_connection(int fd, SSL** ssl)
                goto error;
                break;
          }
-         ERR_clear_error();
+         ERR_clear_error(); // Clear the error state
       }
    }
-   while (status != 1);
+   while (status != 1); // Keep trying until the connection is successful
 
+   // Assign the SSL structure to the output parameter
    *ssl = s;
 
    return AUTH_SUCCESS;
 
 error:
 
+   // Assign the SSL structure to the output parameter even on error
    *ssl = s;
 
    return AUTH_ERROR;

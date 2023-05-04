@@ -490,6 +490,7 @@ struct configuration
    struct hba hbas[NUMBER_OF_HBAS];                /**< The HBA entries */
    struct limit limits[NUMBER_OF_LIMITS];          /**< The limit entries */
    struct user users[NUMBER_OF_USERS];             /**< The users */
+   // memo: Split security model in pgagroal
    struct user frontend_users[NUMBER_OF_USERS];    /**< The frontend users */
    struct user admins[NUMBER_OF_ADMINS];           /**< The admins */
    struct user superuser;                          /**< The superuser */

@@ -100,6 +100,7 @@ pgagroal_worker(int client_fd, char* address, char** argv)
    pgagroal_prometheus_client_wait_add();
    // Authenticate the client and get the corresponding slot in the connection pool
    /* Authentication */
+   // MAIN: TLS 1
    auth_status = pgagroal_authenticate(client_fd, address, &slot, &client_ssl, &server_ssl);
    // If authentication is successful
    if (auth_status == AUTH_SUCCESS)

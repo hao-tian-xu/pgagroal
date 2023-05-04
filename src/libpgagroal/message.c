@@ -651,22 +651,29 @@ pgagroal_write_auth_password(SSL* ssl, int socket)
    char password[9];
    struct message msg;
 
+   // Initialize the message and password buffers to zero
    memset(&msg, 0, sizeof(struct message));
    memset(&password, 0, sizeof(password));
 
+   // Set the first byte of the password buffer to 'R'
    password[0] = 'R';
+   // Write the length of the password message (8) to bytes 1-4 of the password buffer
    pgagroal_write_int32(&(password[1]), 8);
+   // Write the password authentication method code (3) to bytes 5-8 of the password buffer
    pgagroal_write_int32(&(password[5]), 3);
 
+   // Set the message fields
    msg.kind = 'R';
    msg.length = 9;
    msg.data = &password;
 
+   // If SSL is not used, write the message directly to the socket
    if (ssl == NULL)
    {
       return write_message(socket, &msg);
    }
 
+   // If SSL is used, write the message using the SSL connection
    return ssl_write_message(ssl, &msg);
 }
 
